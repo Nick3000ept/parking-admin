@@ -831,31 +831,29 @@ function updateProgress() {
   const seesAll = isAdmin || isViewer;
   const userName = u.name;
   const work = state.filters.work;
-  let total = 0, done = 0;
 
-  for (const num in state.data.assignments) {
-    const wks = state.data.assignments[num];
+  // Считаем по отфильтрованным помещениям
+  const visibleRooms = state.data.rooms.filter(matchesFilters);
+  const total = visibleRooms.length;
+  let done = 0;
+
+  visibleRooms.forEach(r => {
+    const wks = state.data.assignments[r.num] || {};
     if (work) {
       const a = wks[work];
-      if (!a || !a.sp) continue;
-      if (!seesAll && a.sp !== userName) continue;
-      total++;
-      if (a.date) done++;
+      if (a && a.sp && a.date && (seesAll || a.sp === userName)) done++;
     } else {
-      for (const wid in wks) {
-        const a = wks[wid];
-        if (!a.sp) continue;
-        if (!seesAll && a.sp !== userName) continue;
-        total++;
-        if (a.date) done++;
-      }
+      // помещение «готово» если все назначения готовы (хоть одно должно быть)
+      const list = Object.values(wks).filter(x => seesAll ? !!x.sp : x.sp === userName);
+      if (list.length > 0 && list.every(x => x.date)) done++;
     }
-  }
+  });
 
-  const work_label = work ? (state.data.works.find(w => w.id_raboty === work) || {}).full_name : null;
-  const label = work_label
-    ? `Сделано ${done} из ${total} по работе «${work_label}»`
-    : `Сделано ${done} из ${total} по ${seesAll ? 'всем работам' : 'моим работам'}`;
+  const pct = total > 0 ? Math.round((done * 100) / total) : 0;
+  const workLabel = work ? (state.data.works.find(w => w.id_raboty === work) || {}).full_name : null;
+  const label = workLabel
+    ? `Помещений: ${total} · Готово ${done} (${pct}%) · «${workLabel}»`
+    : `Помещений: ${total} · Готово ${done} (${pct}%)`;
   document.getElementById('progressEl').textContent = label;
 
   // toggle "hide done" availability
@@ -1094,24 +1092,29 @@ function bindUI() {
   document.getElementById('filterTip').addEventListener('change', e => {
     state.filters.tip = e.target.value;
     renderMatrix();
+    updateProgress();
   });
 
   document.getElementById('searchNum').addEventListener('input', e => {
     state.filters.searchNum = e.target.value;
     renderMatrix();
+    updateProgress();
   });
   document.getElementById('searchName').addEventListener('input', e => {
     state.filters.searchName = e.target.value;
     renderMatrix();
+    updateProgress();
   });
 
   document.getElementById('toggleHideDone').addEventListener('change', e => {
     state.filters.hideDone = e.target.checked;
     renderMatrix();
+    updateProgress();
   });
   document.getElementById('toggleHideOthers').addEventListener('change', e => {
     state.filters.hideOthers = e.target.checked;
     renderMatrix();
+    updateProgress();
   });
 
   document.getElementById('clearFiltersBtn').addEventListener('click', () => {
