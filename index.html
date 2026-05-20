@@ -31,8 +31,9 @@ body { min-width: 1024px; min-height: 100vh; }
 }
 .header .icon-btn:hover { background: rgba(255,255,255,0.1); transform: rotate(60deg); transition: transform 0.3s; }
 .header .icon-btn:active { transform: rotate(360deg); transition: transform 0.5s; }
-.header button.mark-mode-btn { background: #6B7280; }
-.header button.mark-mode-btn.active { background: #10B981; }
+.header button.mark-mode-btn { background: #10B981; color: #fff; }
+.header button.mark-mode-btn:hover { background: #059669; }
+.header button.mark-mode-btn.active { background: #047857; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
 .header button.mark-mode-btn.active::before { content: '✓ '; }
 .header .user-badge {
   background: #6366F1; padding: 6px 10px; border-radius: 4px; font-size: 13px;
@@ -269,7 +270,6 @@ body.has-selection { padding-bottom: 100px; }
 <div class="header" id="headerEl" style="display:none">
   <h1>Паркинг СБ3</h1>
   <span class="user-badge" id="userBadge"></span>
-  <button class="icon-btn" id="refreshBtn" title="Обновить данные">↻</button>
   <div class="progress" id="progressEl"></div>
   <div class="actions">
     <button id="clearFiltersBtn" title="Сбросить все фильтры">× Очистить фильтры</button>
@@ -1164,7 +1164,6 @@ function showError(msg) {
 // UI bindings
 // ============================================================================
 function bindUI() {
-  document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
   document.getElementById('markModeBtn').addEventListener('click', () => {
     state.markMode = !state.markMode;
     document.getElementById('markModeBtn').classList.toggle('active', state.markMode);
