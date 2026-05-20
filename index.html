@@ -40,12 +40,18 @@ body { min-width: 1024px; min-height: 100vh; }
 
 /* ===== FILTERS ===== */
 .filters {
-  background: #fff; padding: 12px 20px; border-bottom: 1px solid #E5E7EB;
-  display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px;
-  align-items: center; font-size: 13px;
+  background: #fff; padding: 10px 20px; border-bottom: 1px solid #E5E7EB;
+  display: flex; flex-direction: column; gap: 8px; font-size: 13px;
 }
-.filters .label { font-weight: 600; color: #6B7280; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+.filters-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: column; gap: 4px; }
+.filter-group .group-label {
+  font-weight: 600; color: #6B7280; text-transform: uppercase;
+  font-size: 10px; letter-spacing: 0.5px;
+}
+.filter-group .group-content { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .filters .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters-divider { color: #D1D5DB; align-self: center; padding-bottom: 6px; }
 .chip {
   padding: 4px 12px; background: #F3F4F6; border: 1px solid #D1D5DB;
   border-radius: 14px; cursor: pointer; user-select: none; font-size: 12px;
@@ -233,34 +239,53 @@ body { min-width: 1024px; min-height: 100vh; }
 </div>
 
 <div class="filters" id="filtersEl" style="display:none">
-  <div class="label">Захв./Корп./Этаж</div>
-  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-    <div class="chips" id="filterZahvatka"></div>
-    <span style="color:#D1D5DB">│</span>
-    <div class="chips" id="filterKorp"></div>
-    <span style="color:#D1D5DB">│</span>
-    <div class="chips" id="filterFloor"></div>
+  <div class="filters-row">
+    <div class="filter-group">
+      <div class="group-label">Захватка</div>
+      <div class="group-content"><div class="chips" id="filterZahvatka"></div></div>
+    </div>
+    <span class="filters-divider">│</span>
+    <div class="filter-group">
+      <div class="group-label">Корпус</div>
+      <div class="group-content"><div class="chips" id="filterKorp"></div></div>
+    </div>
+    <span class="filters-divider">│</span>
+    <div class="filter-group">
+      <div class="group-label">Этаж</div>
+      <div class="group-content"><div class="chips" id="filterFloor"></div></div>
+    </div>
   </div>
 
-  <div class="label">Тип / Поиск</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <select id="filterTip">
-      <option value="">— Все типы помещений —</option>
-    </select>
-    <span style="color:#D1D5DB">│</span>
-    <input type="text" id="searchNum" placeholder="По номеру (7.-3.01)">
-    <input type="text" id="searchName" placeholder="По назначению (Кладовая)">
+  <div class="filters-row">
+    <div class="filter-group">
+      <div class="group-label">Тип помещения</div>
+      <div class="group-content">
+        <select id="filterTip">
+          <option value="">— Все типы помещений —</option>
+        </select>
+      </div>
+    </div>
+    <span class="filters-divider">│</span>
+    <div class="filter-group">
+      <div class="group-label">Поиск по номеру</div>
+      <div class="group-content"><input type="text" id="searchNum" placeholder="7.-3.01"></div>
+    </div>
+    <div class="filter-group">
+      <div class="group-label">Поиск по назначению</div>
+      <div class="group-content"><input type="text" id="searchName" placeholder="Кладовая"></div>
+    </div>
   </div>
 
-  <div class="label"></div>
-  <div class="toggle-row">
-    <label class="toggle" id="toggleDoneLabel">
-      <input type="checkbox" id="toggleHideDone"> Скрыть готовые
-    </label>
-    <label class="toggle">
-      <input type="checkbox" id="toggleHideOthers"> Скрыть чужие
-    </label>
-    <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
+  <div class="filters-row">
+    <div class="toggle-row">
+      <label class="toggle" id="toggleDoneLabel">
+        <input type="checkbox" id="toggleHideDone"> Скрыть готовые
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="toggleHideOthers"> Скрыть чужие
+      </label>
+      <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
+    </div>
   </div>
 </div>
 
