@@ -11,18 +11,26 @@ body { min-width: 1024px; min-height: 100vh; }
 
 /* ===== HEADER ===== */
 .header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 20px; background: #1F2937; color: #fff;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 20px; background: #1F2937; color: #fff;
   position: sticky; top: 0; z-index: 50;
 }
 .header h1 { font-size: 18px; font-weight: 600; }
-.header .progress { font-size: 14px; opacity: 0.85; margin-left: 24px; flex: 1; }
+.header .progress { font-size: 14px; opacity: 0.85; flex: 1; }
 .header .actions { display: flex; gap: 10px; align-items: center; }
 .header button {
   background: #374151; color: #fff; border: none; padding: 6px 14px;
   border-radius: 4px; cursor: pointer; font-size: 13px;
 }
 .header button:hover { background: #4B5563; }
+.header .icon-btn {
+  background: transparent; border: 1px solid rgba(255,255,255,0.25);
+  width: 34px; height: 34px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; line-height: 1;
+}
+.header .icon-btn:hover { background: rgba(255,255,255,0.1); transform: rotate(60deg); transition: transform 0.3s; }
+.header .icon-btn:active { transform: rotate(360deg); transition: transform 0.5s; }
 .header button.mark-mode-btn { background: #6B7280; }
 .header button.mark-mode-btn.active { background: #10B981; }
 .header button.mark-mode-btn.active::before { content: '✓ '; }
@@ -261,12 +269,11 @@ body.has-selection { padding-bottom: 100px; }
 <!-- ===== Main UI ===== -->
 <div class="header" id="headerEl" style="display:none">
   <h1>Паркинг СБ3</h1>
+  <span class="user-badge" id="userBadge"></span>
+  <button class="icon-btn" id="refreshBtn" title="Обновить данные">↻</button>
   <div class="progress" id="progressEl"></div>
   <div class="actions">
-    <span class="user-badge" id="userBadge"></span>
     <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
-    <button id="refreshBtn">Обновить</button>
-    <button id="logoutBtn">Выйти</button>
   </div>
 </div>
 
@@ -1169,11 +1176,6 @@ function bindUI() {
     renderMatrix();
   });
   document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
-  document.getElementById('logoutBtn').addEventListener('click', () => {
-    localStorage.removeItem(STORAGE_TOKEN);
-    localStorage.removeItem(STORAGE_DATA_PREFIX + state.token);
-    showDenied('Вы вышли. Откройте ссылку, выданную администратором.');
-  });
   document.getElementById('emptyRefreshBtn').addEventListener('click', () => loadData(true));
   document.getElementById('errorRetryBtn').addEventListener('click', () => loadData(true));
 
