@@ -32,7 +32,7 @@ const CONFIG = {
   COL_KS: 12,
 
   TIMEZONE: 'Europe/Moscow',
-  LOCK_TIMEOUT_MS: 10000,
+  LOCK_TIMEOUT_MS: 30000,
 
   ADMIN_ID: 'admin',
   VIEWER_ID: 'viewer'
@@ -68,9 +68,9 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
+  // Без обёрточного lock'а — read-операции (auth, проверка прав) идут параллельно.
+  // Lock берётся ТОЛЬКО на финальный setValue/clearContent внутри setDate/clearDate.
   try {
-    lock.waitLock(CONFIG.LOCK_TIMEOUT_MS);
     const body = JSON.parse(e.postData.contents);
     const user = authenticate(body.token);
     if (!user) {
@@ -87,8 +87,6 @@ function doPost(e) {
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err && err.message ? err.message : err) });
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
   }
 }
 
@@ -309,9 +307,11 @@ function setDate(user, num, idRaboty, hint) {
   }
 
   assertWritableColumn(cell.colDate);
-  const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
   const today = new Date();
-  sheet.getRange(cell.row, cell.colDate).setValue(today);
+  withLock_(function () {
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+    sheet.getRange(cell.row, cell.colDate).setValue(today);
+  });
 
   return {
     ok: true,
@@ -338,10 +338,27 @@ function clearDate(user, num, idRaboty, hint) {
   }
 
   assertWritableColumn(cell.colDate);
-  const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
-  sheet.getRange(cell.row, cell.colDate).clearContent();
+  withLock_(function () {
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+    sheet.getRange(cell.row, cell.colDate).clearContent();
+  });
 
   return { ok: true, date: '', num: num, id_raboty: idRaboty };
+}
+
+/**
+ * Берёт script lock только на короткое время выполнения write-операции.
+ * Защищает от одновременной записи в одну и ту же ячейку.
+ */
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(CONFIG.LOCK_TIMEOUT_MS);
+  try {
+    fn();
+    SpreadsheetApp.flush();
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
 }
 
 /**
