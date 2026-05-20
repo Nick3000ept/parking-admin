@@ -71,41 +71,40 @@ body.has-selection { padding-bottom: 100px; }
 
 /* ===== FILTERS ===== */
 .filters {
-  background: #fff; padding: 10px 20px; border-bottom: 1px solid #E5E7EB;
-  display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+  background: #fff; padding: 6px 20px 8px; border-bottom: 1px solid #E5E7EB;
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px;
 }
-.filters-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-.filter-group { display: flex; flex-direction: column; gap: 4px; }
+.filters-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 .filter-group .group-label {
-  font-weight: 600; color: #6B7280; text-transform: uppercase;
-  font-size: 10px; letter-spacing: 0.5px;
+  font-weight: 600; color: #9CA3AF; text-transform: uppercase;
+  font-size: 10px; letter-spacing: 0.5px; flex-shrink: 0;
 }
-.filter-group .group-content { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.filters .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.filters-divider { color: #D1D5DB; align-self: center; padding-bottom: 6px; }
+.filter-group .group-content { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.filters .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.filters-divider { color: #E5E7EB; }
 .chip {
-  padding: 4px 12px; background: #F3F4F6; border: 1px solid #D1D5DB;
-  border-radius: 14px; cursor: pointer; user-select: none; font-size: 12px;
+  padding: 2px 9px; background: #F3F4F6; border: 1px solid #D1D5DB;
+  border-radius: 12px; cursor: pointer; user-select: none; font-size: 11px;
   transition: all 0.1s;
 }
 .chip:hover { background: #E5E7EB; }
 .chip.active { background: #1F2937; color: #fff; border-color: #1F2937; }
 .filters input[type="text"] {
-  padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 4px;
-  font-size: 13px; width: 180px;
+  padding: 3px 8px; border: 1px solid #D1D5DB; border-radius: 4px;
+  font-size: 12px; width: 140px;
 }
 .filters select {
-  padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 4px;
-  font-size: 13px; min-width: 180px;
+  padding: 3px 8px; border: 1px solid #D1D5DB; border-radius: 4px;
+  font-size: 12px; min-width: 160px;
 }
-.filters .toggle-row { display: flex; gap: 16px; align-items: center; }
-.toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.filters .toggle-row { display: flex; gap: 14px; align-items: center; font-size: 12px; }
+.toggle { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .toggle input { cursor: pointer; }
 .toggle.disabled { opacity: 0.4; cursor: not-allowed; }
-.filters .actions-row { display: flex; gap: 8px; }
 .filters .clear-btn {
-  padding: 4px 10px; background: #fff; border: 1px solid #D1D5DB;
-  border-radius: 4px; cursor: pointer; font-size: 12px;
+  padding: 3px 9px; background: #fff; border: 1px solid #D1D5DB;
+  border-radius: 4px; cursor: pointer; font-size: 11px;
 }
 .filters .clear-btn:hover { background: #F9FAFB; }
 
@@ -297,25 +296,23 @@ body.has-selection { padding-bottom: 100px; }
 
   <div class="filters-row">
     <div class="filter-group">
-      <div class="group-label">Тип помещения</div>
+      <div class="group-label">Тип</div>
       <div class="group-content">
         <select id="filterTip">
-          <option value="">— Все типы помещений —</option>
+          <option value="">— Все типы —</option>
         </select>
       </div>
     </div>
     <span class="filters-divider">│</span>
     <div class="filter-group">
-      <div class="group-label">Поиск по номеру</div>
+      <div class="group-label">Номер</div>
       <div class="group-content"><input type="text" id="searchNum" placeholder="7.-3.01"></div>
     </div>
     <div class="filter-group">
-      <div class="group-label">Поиск по назначению</div>
+      <div class="group-label">Назначение</div>
       <div class="group-content"><input type="text" id="searchName" placeholder="Кладовая"></div>
     </div>
-  </div>
-
-  <div class="filters-row">
+    <span class="filters-divider">│</span>
     <div class="toggle-row">
       <label class="toggle" id="toggleDoneLabel">
         <input type="checkbox" id="toggleHideDone"> Скрыть готовые
