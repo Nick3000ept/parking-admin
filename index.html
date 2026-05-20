@@ -136,10 +136,12 @@ body { min-width: 1024px; min-height: 100vh; }
 .card.selected { outline: 3px solid #2563EB; outline-offset: -2px; z-index: 2; }
 .card .checkbox {
   position: absolute; right: 3px; top: 3px;
-  width: 12px; height: 12px; border: 1px solid rgba(0,0,0,0.4);
-  border-radius: 2px; background: rgba(255,255,255,0.6);
-  display: flex; align-items: center; justify-content: center; font-size: 9px;
+  width: 16px; height: 16px; border: 1px solid rgba(0,0,0,0.4);
+  border-radius: 3px; background: rgba(255,255,255,0.75);
+  display: flex; align-items: center; justify-content: center; font-size: 11px;
+  cursor: pointer;
 }
+.card .checkbox:hover { background: #fff; border-color: rgba(0,0,0,0.6); }
 .card.done .checkbox, .card.done-other .checkbox {
   background: #fff; border-color: #fff; color: #34D399;
 }
@@ -746,6 +748,12 @@ function buildCard(room) {
       const cb = document.createElement('div');
       cb.className = 'checkbox';
       cb.textContent = '✓';
+      if (canToggle) {
+        cb.addEventListener('click', e => {
+          e.stopPropagation();
+          clearMark(room.num, work);
+        });
+      }
       card.appendChild(cb);
     } else {
       // Назначено, не готово
@@ -755,6 +763,10 @@ function buildCard(room) {
         canToggle = true;
         const cb = document.createElement('div');
         cb.className = 'checkbox';
+        cb.addEventListener('click', e => {
+          e.stopPropagation();
+          setMark(room.num, work);
+        });
         card.appendChild(cb);
       } else {
         card.classList.add('dimmed');
@@ -762,11 +774,9 @@ function buildCard(room) {
     }
   }
 
-  // Клик по карточке:
-  //   Ctrl/Cmd+Click → multi-select toggle (не отмечает работу)
-  //   обычный клик:
-  //     canToggle=true  → toggle отметки (без confirm)
-  //     canToggle=false → открыть попап (детальный режим)
+  // Клик по карточке (но не по чекбоксу — у того свой stopPropagation):
+  //   Ctrl/Cmd+Click → multi-select toggle
+  //   Обычный клик   → открыть попап
   card.addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey) {
       if (state.selected.has(room.num)) state.selected.delete(room.num);
@@ -775,12 +785,7 @@ function buildCard(room) {
       updateSelectionInfo();
       return;
     }
-    if (canToggle) {
-      if (isDone) clearMark(room.num, work);
-      else setMark(room.num, work);
-    } else {
-      openPopup(room);
-    }
+    openPopup(room);
   });
 
   return card;
