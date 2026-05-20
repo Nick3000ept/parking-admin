@@ -212,11 +212,12 @@ body { min-width: 1024px; min-height: 100vh; }
 </div>
 
 <div class="filters" id="filtersEl" style="display:none">
-  <div class="label">Захватка</div>
-  <div class="chips" id="filterZahvatka"></div>
-
-  <div class="label">Корпус</div>
-  <div class="chips" id="filterKorp"></div>
+  <div class="label">Захв. / Корпус</div>
+  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <div class="chips" id="filterZahvatka"></div>
+    <span style="color:#D1D5DB">│</span>
+    <div class="chips" id="filterKorp"></div>
+  </div>
 
   <div class="label">Этаж</div>
   <div class="chips" id="filterFloor"></div>
