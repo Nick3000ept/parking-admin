@@ -6,14 +6,14 @@
 <title>Паркинг СБ3</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1F2937; background: #F3F4F6; }
-body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidden; }
+html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1F2937; background: #F3F4F6; }
+body { min-width: 1024px; min-height: 100vh; }
 
 /* ===== HEADER ===== */
 .header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 20px; background: #1F2937; color: #fff;
-  flex-shrink: 0;
+  position: sticky; top: 0; z-index: 50;
 }
 .header h1 { font-size: 18px; font-weight: 600; }
 .header .progress { font-size: 14px; opacity: 0.85; margin-left: 24px; flex: 1; }
@@ -27,11 +27,12 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
   background: #6366F1; padding: 6px 10px; border-radius: 4px; font-size: 13px;
 }
 .header .user-badge.admin { background: #DC2626; }
+.header .user-badge.viewer { background: #6B7280; }
 
 /* ===== FILTERS ===== */
 .filters {
   background: #fff; padding: 12px 20px; border-bottom: 1px solid #E5E7EB;
-  flex-shrink: 0; display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px;
+  display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px;
   align-items: center; font-size: 13px;
 }
 .filters .label { font-weight: 600; color: #6B7280; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
@@ -63,7 +64,26 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
 .filters .clear-btn:hover { background: #F9FAFB; }
 
 /* ===== MATRIX ===== */
-.matrix-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 8px 20px 20px; }
+.matrix-wrap { display: flex; flex-direction: column; padding: 8px 20px 20px; min-height: calc(100vh - 290px); }
+
+/* ===== Work tabs (над матрицей, single-select) ===== */
+.work-tabs {
+  background: #fff; padding: 10px 20px; border-bottom: 1px solid #E5E7EB;
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 13px;
+}
+.work-group { display: flex; align-items: center; gap: 6px; }
+.work-group .group-label {
+  font-weight: 700; color: #6B7280; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px;
+}
+.work-tab {
+  padding: 5px 12px; background: #F3F4F6; border: 1px solid #D1D5DB;
+  border-radius: 14px; cursor: pointer; user-select: none; font-size: 12px;
+  color: #1F2937; transition: all 0.1s;
+}
+.work-tab:hover { background: #E5E7EB; }
+.work-tab.active { background: #1F2937; color: #fff; border-color: #1F2937; font-weight: 600; }
+.work-tab.all-tab { font-weight: 600; }
 .matrix-col-headers {
   display: grid; gap: 4px; margin-left: 44px; margin-bottom: 4px;
   font-size: 12px; font-weight: 600; color: #6B7280; text-align: center;
@@ -78,12 +98,9 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
 }
 .cell {
   background: #fff; border: 1px solid #E5E7EB; border-radius: 4px;
-  padding: 6px; overflow-y: auto; min-height: 60px;
+  padding: 6px;
   display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;
 }
-.cell::-webkit-scrollbar { width: 6px; }
-.cell::-webkit-scrollbar-track { background: transparent; }
-.cell::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 
 /* ===== CARDS ===== */
 .card {
@@ -204,11 +221,8 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
   <div class="label">Этаж</div>
   <div class="chips" id="filterFloor"></div>
 
-  <div class="label">Работа / Тип</div>
-  <div style="display:flex;gap:8px">
-    <select id="filterWork">
-      <option value="">— Все работы (без выбора) —</option>
-    </select>
+  <div class="label">Тип помещения</div>
+  <div>
     <select id="filterTip">
       <option value="">— Все типы помещений —</option>
     </select>
@@ -231,6 +245,8 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
     <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
   </div>
 </div>
+
+<div class="work-tabs" id="workTabs" style="display:none"></div>
 
 <div class="matrix-wrap" id="matrixWrap" style="display:none">
   <div class="matrix-col-headers" id="matrixColHeaders"></div>
@@ -401,8 +417,8 @@ function renderApp() {
     return;
   }
 
-  // Check if user has any assignments (only for non-admin)
-  if (!state.data.user.isAdmin) {
+  // Check if user has any assignments (only for non-admin/non-viewer)
+  if (!state.data.user.isAdmin && !state.data.user.isViewer) {
     const hasAny = state.data.rooms.some(r => {
       const a = state.data.assignments[r.num] || {};
       return Object.values(a).some(x => x.sp === state.data.user.name);
@@ -415,10 +431,12 @@ function renderApp() {
 
   document.getElementById('headerEl').style.display = 'flex';
   document.getElementById('filtersEl').style.display = 'grid';
+  document.getElementById('workTabs').style.display = 'flex';
   document.getElementById('matrixWrap').style.display = 'flex';
 
   renderHeader();
   renderFilters();
+  renderWorkTabs();
   renderMatrix();
   updateProgress();
 }
@@ -426,8 +444,12 @@ function renderApp() {
 function renderHeader() {
   const u = state.data.user;
   const badge = document.getElementById('userBadge');
-  badge.textContent = u.name;
+  let suffix = '';
+  if (u.isAdmin) suffix = ' · АДМИН';
+  else if (u.isViewer) suffix = ' · ПРОСМОТР';
+  badge.textContent = u.name + suffix;
   badge.classList.toggle('admin', u.isAdmin);
+  badge.classList.toggle('viewer', u.isViewer);
 }
 
 function renderFilters() {
@@ -450,28 +472,76 @@ function renderFilters() {
     tipSel.appendChild(o);
   });
 
-  const workSel = document.getElementById('filterWork');
-  workSel.innerHTML = '<option value="">— Все работы (без выбора) —</option>';
+}
 
-  // For contractor: only works where they're assigned somewhere
+function renderWorkTabs() {
+  const tabsEl = document.getElementById('workTabs');
+  const works = state.data.works;
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
-  const availableWorkIds = new Set();
+  const current = state.filters.work;
+
+  // Available works for current user
+  // Admin и Viewer видят все работы; подрядчик — только те, на которые он назначен где-либо
+  const isViewer = state.data.user.isViewer;
+  const availableIds = new Set();
   for (const num in state.data.assignments) {
     const wks = state.data.assignments[num];
     for (const wid in wks) {
-      if (isAdmin || wks[wid].sp === userName) {
-        availableWorkIds.add(wid);
-      }
+      if (isAdmin || isViewer || wks[wid].sp === userName) availableIds.add(wid);
     }
   }
-  works.forEach(w => {
-    if (!isAdmin && !availableWorkIds.has(w.id_raboty)) return;
-    const o = document.createElement('option');
-    o.value = w.id_raboty;
-    o.textContent = w.full_name + (w.surface ? ' (' + w.surface + ')' : '');
-    workSel.appendChild(o);
+  const visibleWorks = works.filter(w => isAdmin || isViewer || availableIds.has(w.id_raboty));
+
+  // Group by surface, preserve work order
+  const groups = {};
+  const groupOrder = [];
+  visibleWorks.forEach(w => {
+    const s = w.surface || 'Прочее';
+    if (!groups[s]) { groups[s] = []; groupOrder.push(s); }
+    groups[s].push(w);
   });
+
+  // Render
+  tabsEl.innerHTML = '';
+
+  // "Все работы" tab (clears selection)
+  const allBtn = document.createElement('button');
+  allBtn.className = 'work-tab all-tab' + (current === '' ? ' active' : '');
+  allBtn.textContent = 'Все работы';
+  allBtn.addEventListener('click', () => selectWork(''));
+  tabsEl.appendChild(allBtn);
+
+  // Groups
+  groupOrder.forEach(surface => {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'work-group';
+    const label = document.createElement('span');
+    label.className = 'group-label';
+    label.textContent = surface;
+    groupEl.appendChild(label);
+    groups[surface].forEach(w => {
+      const btn = document.createElement('button');
+      btn.className = 'work-tab' + (current === w.id_raboty ? ' active' : '');
+      btn.textContent = w.short_name || w.full_name;
+      btn.title = w.full_name;
+      btn.addEventListener('click', () => selectWork(w.id_raboty));
+      groupEl.appendChild(btn);
+    });
+    tabsEl.appendChild(groupEl);
+  });
+}
+
+function selectWork(workId) {
+  // Single-select: повторный клик по активному снимает (= "Все работы")
+  if (state.filters.work === workId) {
+    state.filters.work = '';
+  } else {
+    state.filters.work = workId;
+  }
+  renderWorkTabs();
+  renderMatrix();
+  updateProgress();
 }
 
 function renderChips(containerId, items, filterKey) {
@@ -557,10 +627,11 @@ function buildCard(room) {
   const work = state.filters.work;
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
+  const isViewer = state.data.user.isViewer;
   const assignments = state.data.assignments[room.num] || {};
 
   // Определяем поведение клика и визуал карточки
-  // canToggle: можно ли тут поставить/снять отметку (работа выбрана + права)
+  // canToggle: можно ли тут поставить/снять отметку (работа выбрана + права + не viewer)
   let canToggle = false;
   let isDone = false;
 
@@ -580,7 +651,7 @@ function buildCard(room) {
     } else if (date) {
       // Готово
       isDone = true;
-      if (sp === userName || isAdmin) {
+      if ((sp === userName || isAdmin) && !isViewer) {
         card.classList.add('done');
         canToggle = true;
       } else {
@@ -594,7 +665,7 @@ function buildCard(room) {
       // Назначено, не готово
       const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
       card.style.background = color;
-      if (sp === userName || isAdmin) {
+      if ((sp === userName || isAdmin) && !isViewer) {
         canToggle = true;
         const cb = document.createElement('div');
         cb.className = 'checkbox';
@@ -632,6 +703,8 @@ function matchesFilters(room) {
   const assignments = state.data.assignments[room.num] || {};
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
+  const isViewer = state.data.user.isViewer;
+  const seesAll = isAdmin || isViewer;
 
   if (f.work) {
     const a = assignments[f.work];
@@ -640,11 +713,11 @@ function matchesFilters(room) {
     if (f.hideDone && date) return false;
     if (f.hideOthers) {
       if (!sp) return false;
-      if (!isAdmin && sp !== userName) return false;
+      if (!seesAll && sp !== userName) return false;
     }
   } else {
     if (f.hideOthers) {
-      const anyMine = Object.values(assignments).some(x => isAdmin ? !!x.sp : x.sp === userName);
+      const anyMine = Object.values(assignments).some(x => seesAll ? !!x.sp : x.sp === userName);
       if (!anyMine) return false;
     }
   }
@@ -654,6 +727,8 @@ function matchesFilters(room) {
 function updateProgress() {
   const u = state.data.user;
   const isAdmin = u.isAdmin;
+  const isViewer = u.isViewer;
+  const seesAll = isAdmin || isViewer;
   const userName = u.name;
   const work = state.filters.work;
   let total = 0, done = 0;
@@ -663,14 +738,14 @@ function updateProgress() {
     if (work) {
       const a = wks[work];
       if (!a || !a.sp) continue;
-      if (!isAdmin && a.sp !== userName) continue;
+      if (!seesAll && a.sp !== userName) continue;
       total++;
       if (a.date) done++;
     } else {
       for (const wid in wks) {
         const a = wks[wid];
         if (!a.sp) continue;
-        if (!isAdmin && a.sp !== userName) continue;
+        if (!seesAll && a.sp !== userName) continue;
         total++;
         if (a.date) done++;
       }
@@ -680,7 +755,7 @@ function updateProgress() {
   const work_label = work ? (state.data.works.find(w => w.id_raboty === work) || {}).full_name : null;
   const label = work_label
     ? `Сделано ${done} из ${total} по работе «${work_label}»`
-    : `Сделано ${done} из ${total} по ${isAdmin ? 'всем работам' : 'моим работам'}`;
+    : `Сделано ${done} из ${total} по ${seesAll ? 'всем работам' : 'моим работам'}`;
   document.getElementById('progressEl').textContent = label;
 
   // toggle "hide done" availability
@@ -771,6 +846,7 @@ function refreshPopupIfOpen(num) {
 function renderPopup(room) {
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
+  const isViewer = state.data.user.isViewer;
   const assignments = state.data.assignments[room.num] || {};
   const works = state.data.works;
 
@@ -798,7 +874,7 @@ function renderPopup(room) {
       ${assignedWorks.length === 0 ? '<div style="color:#9CA3AF;padding:10px">Назначений нет</div>' : ''}
       ${assignedWorks.map(w => {
         const a = assignments[w.id_raboty];
-        const canEdit = isAdmin || a.sp === userName;
+        const canEdit = !isViewer && (isAdmin || a.sp === userName);
         const done = !!a.date;
         return `
           <div class="popup-work-row ${done ? 'done' : ''} ${canEdit ? '' : 'read-only'}" data-wid="${w.id_raboty}">
@@ -867,12 +943,6 @@ function bindUI() {
   document.getElementById('emptyRefreshBtn').addEventListener('click', () => loadData(true));
   document.getElementById('errorRetryBtn').addEventListener('click', () => loadData(true));
 
-  document.getElementById('filterWork').addEventListener('change', e => {
-    state.filters.work = e.target.value;
-    renderMatrix();
-    updateProgress();
-  });
-
   document.getElementById('filterTip').addEventListener('change', e => {
     state.filters.tip = e.target.value;
     renderMatrix();
@@ -906,13 +976,13 @@ function bindUI() {
     state.filters.searchName = '';
     state.filters.hideDone = false;
     state.filters.hideOthers = false;
-    document.getElementById('filterWork').value = '';
     document.getElementById('filterTip').value = '';
     document.getElementById('searchNum').value = '';
     document.getElementById('searchName').value = '';
     document.getElementById('toggleHideDone').checked = false;
     document.getElementById('toggleHideOthers').checked = false;
     renderFilters();
+    renderWorkTabs();
     renderMatrix();
     updateProgress();
   });

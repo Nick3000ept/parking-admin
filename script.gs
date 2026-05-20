@@ -34,7 +34,8 @@ const CONFIG = {
   TIMEZONE: 'Europe/Moscow',
   LOCK_TIMEOUT_MS: 10000,
 
-  ADMIN_ID: 'admin'
+  ADMIN_ID: 'admin',
+  VIEWER_ID: 'viewer'
 };
 
 // =============================================================================
@@ -109,7 +110,8 @@ function authenticate(token) {
       return {
         name: String(data[i][0] || ''),
         id: id,
-        isAdmin: id === CONFIG.ADMIN_ID
+        isAdmin: id === CONFIG.ADMIN_ID,
+        isViewer: id === CONFIG.VIEWER_ID
       };
     }
   }
@@ -285,6 +287,8 @@ function computeVersionHash(headers, worksCount, tipyCount) {
 // =============================================================================
 
 function setDate(user, num, idRaboty) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+
   const cell = locateCell(num, idRaboty);
   if (cell.error) return { ok: false, error: cell.error };
 
@@ -318,6 +322,8 @@ function setDate(user, num, idRaboty) {
 }
 
 function clearDate(user, num, idRaboty) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+
   const cell = locateCell(num, idRaboty);
   if (cell.error) return { ok: false, error: cell.error };
 
