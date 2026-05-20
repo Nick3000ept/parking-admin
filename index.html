@@ -548,8 +548,13 @@ function buildCard(room) {
   const isAdmin = state.data.user.isAdmin;
   const assignments = state.data.assignments[room.num] || {};
 
+  // Определяем поведение клика и визуал карточки
+  // canToggle: можно ли тут поставить/снять отметку (работа выбрана + права)
+  let canToggle = false;
+  let isDone = false;
+
   if (!work) {
-    // No work selected — color by type
+    // Работа не выбрана — карточка информативна, цвет по типу
     const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
     card.style.background = color;
   } else {
@@ -558,13 +563,15 @@ function buildCard(room) {
     const date = a ? a.date : '';
 
     if (!sp) {
-      // Not assigned to anyone — dimmed grey
+      // Никому не назначено — dimmed
       card.classList.add('dimmed');
       card.style.background = DEFAULT_COLOR;
     } else if (date) {
-      // Done
+      // Готово
+      isDone = true;
       if (sp === userName || isAdmin) {
         card.classList.add('done');
+        canToggle = true;
       } else {
         card.classList.add('done-other');
       }
@@ -572,31 +579,33 @@ function buildCard(room) {
       cb.className = 'checkbox';
       cb.textContent = '✓';
       card.appendChild(cb);
-      if (isAdmin || sp === userName) {
-        cb.addEventListener('click', (e) => {
-          e.stopPropagation();
-          confirmAndClear(room.num, work);
-        });
-      }
     } else {
-      // Assigned, not done
+      // Назначено, не готово
       const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
       card.style.background = color;
       if (sp === userName || isAdmin) {
+        canToggle = true;
         const cb = document.createElement('div');
         cb.className = 'checkbox';
         card.appendChild(cb);
-        cb.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setMark(room.num, work);
-        });
       } else {
         card.classList.add('dimmed');
       }
     }
   }
 
-  card.addEventListener('click', () => openPopup(room));
+  // Клик по карточке:
+  //   canToggle=true  → toggle отметки (без confirm)
+  //   canToggle=false → открыть попап (детальный режим)
+  card.addEventListener('click', () => {
+    if (canToggle) {
+      if (isDone) clearMark(room.num, work);
+      else setMark(room.num, work);
+    } else {
+      openPopup(room);
+    }
+  });
+
   return card;
 }
 
@@ -693,8 +702,7 @@ async function setMark(num, idRaboty) {
   refreshPopupIfOpen(num);
 }
 
-async function confirmAndClear(num, idRaboty) {
-  if (!confirm('Снять отметку готовности?')) return;
+async function clearMark(num, idRaboty) {
   const result = await postAction('clearDate', { num, id_raboty: idRaboty });
   if (!result.ok) {
     toast('Не удалось: ' + (result.error || 'ошибка'), true);
@@ -803,7 +811,7 @@ function renderPopup(room) {
     rowEl.addEventListener('click', () => {
       const wid = rowEl.dataset.wid;
       const a = assignments[wid];
-      if (a.date) confirmAndClear(room.num, wid);
+      if (a.date) clearMark(room.num, wid);
       else setMark(room.num, wid);
     });
   });
