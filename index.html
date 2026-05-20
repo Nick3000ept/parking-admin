@@ -23,6 +23,9 @@ body { min-width: 1024px; min-height: 100vh; }
   border-radius: 4px; cursor: pointer; font-size: 13px;
 }
 .header button:hover { background: #4B5563; }
+.header button.mark-mode-btn { background: #6B7280; }
+.header button.mark-mode-btn.active { background: #10B981; }
+.header button.mark-mode-btn.active::before { content: '✓ '; }
 .header .user-badge {
   background: #6366F1; padding: 6px 10px; border-radius: 4px; font-size: 13px;
 }
@@ -134,16 +137,22 @@ body { min-width: 1024px; min-height: 100vh; }
 .card.done { background: #34D399; color: #fff; }
 .card.done-other { background: #34D399; opacity: 0.5; color: #fff; }
 .card.selected { outline: 3px solid #2563EB; outline-offset: -2px; z-index: 2; }
-.card .checkbox {
-  position: absolute; right: 3px; top: 3px;
-  width: 16px; height: 16px; border: 1px solid rgba(0,0,0,0.4);
-  border-radius: 3px; background: rgba(255,255,255,0.75);
-  display: flex; align-items: center; justify-content: center; font-size: 11px;
-  cursor: pointer;
+.card.markable {
+  outline: 2px dashed #10B981; outline-offset: -2px;
 }
-.card .checkbox:hover { background: #fff; border-color: rgba(0,0,0,0.6); }
-.card.done .checkbox, .card.done-other .checkbox {
-  background: #fff; border-color: #fff; color: #34D399;
+.card.markable:hover {
+  outline: 3px solid #10B981;
+  box-shadow: 0 0 0 4px rgba(16,185,129,0.2), 0 4px 8px rgba(0,0,0,0.15);
+  transform: translateY(-2px);
+}
+.card.done::after {
+  content: '✓'; position: absolute; right: 4px; top: 2px;
+  font-size: 14px; font-weight: 700; color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+.card.done-other::after {
+  content: '✓'; position: absolute; right: 4px; top: 2px;
+  font-size: 14px; color: #fff; opacity: 0.7;
 }
 .card .num { font-size: 14px; font-weight: 700; line-height: 1.1; letter-spacing: 0.2px; }
 .card .tip {
@@ -235,6 +244,7 @@ body { min-width: 1024px; min-height: 100vh; }
   </div>
   <div class="actions">
     <span class="user-badge" id="userBadge"></span>
+    <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
     <button id="refreshBtn">Обновить</button>
     <button id="logoutBtn">Выйти</button>
   </div>
@@ -368,6 +378,7 @@ const state = {
   token: null,
   data: null,
   selected: new Set(), // num помещений выбранных через Ctrl+Click
+  markMode: false, // режим отметки: клик по карточке ставит/снимает
   filters: {
     zahvatka: new Set(),
     korp: new Set(),
@@ -745,38 +756,25 @@ function buildCard(room) {
       } else {
         card.classList.add('done-other');
       }
-      const cb = document.createElement('div');
-      cb.className = 'checkbox';
-      cb.textContent = '✓';
-      if (canToggle) {
-        cb.addEventListener('click', e => {
-          e.stopPropagation();
-          clearMark(room.num, work);
-        });
-      }
-      card.appendChild(cb);
     } else {
       // Назначено, не готово
       const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
       card.style.background = color;
       if ((sp === userName || isAdmin) && !isViewer) {
         canToggle = true;
-        const cb = document.createElement('div');
-        cb.className = 'checkbox';
-        cb.addEventListener('click', e => {
-          e.stopPropagation();
-          setMark(room.num, work);
-        });
-        card.appendChild(cb);
       } else {
         card.classList.add('dimmed');
       }
     }
   }
 
-  // Клик по карточке (но не по чекбоксу — у того свой stopPropagation):
-  //   Ctrl/Cmd+Click → multi-select toggle
-  //   Обычный клик   → открыть попап
+  // В режиме отметки кликабельные карточки получают подсветку
+  if (state.markMode && canToggle) card.classList.add('markable');
+
+  // Клик по карточке:
+  //   Ctrl/Cmd+Click            → multi-select toggle
+  //   markMode + canToggle      → ставит/снимает отметку
+  //   иначе                     → открыть попап
   card.addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey) {
       if (state.selected.has(room.num)) state.selected.delete(room.num);
@@ -785,7 +783,12 @@ function buildCard(room) {
       updateSelectionInfo();
       return;
     }
-    openPopup(room);
+    if (state.markMode && canToggle) {
+      if (isDone) clearMark(room.num, work);
+      else setMark(room.num, work);
+    } else {
+      openPopup(room);
+    }
   });
 
   return card;
@@ -1080,6 +1083,11 @@ function showError(msg) {
 // ============================================================================
 function bindUI() {
   document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+  document.getElementById('markModeBtn').addEventListener('click', () => {
+    state.markMode = !state.markMode;
+    document.getElementById('markModeBtn').classList.toggle('active', state.markMode);
+    renderMatrix();
+  });
   document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
   document.getElementById('logoutBtn').addEventListener('click', () => {
     localStorage.removeItem(STORAGE_TOKEN);
