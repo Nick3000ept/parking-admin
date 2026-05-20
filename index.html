@@ -18,7 +18,14 @@ body.mark-mode-active .header { background: #047857; transition: background 0.2s
   box-shadow: 0 2px 0 rgba(0,0,0,0.25);
 }
 .header h1 { font-size: 18px; font-weight: 600; }
-.header .progress { font-size: 14px; opacity: 0.85; flex: 1; }
+.header .progress { font-size: 13px; flex: 1; display: flex; flex-direction: column; gap: 2px; line-height: 1.2; }
+.header .progress .metric { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.header .progress .metric .label { opacity: 0.65; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+.header .progress .metric .total { font-weight: 600; }
+.header .progress .metric .done { color: #34D399; font-weight: 600; }
+.header .progress .metric .rest { color: #FBBF24; font-weight: 600; }
+.header .progress .metric .sep { opacity: 0.4; }
+.header .progress .metric .work-name { opacity: 0.75; font-size: 12px; margin-left: 4px; }
 .header .actions { display: flex; gap: 10px; align-items: center; }
 .header button {
   background: #374151; color: #fff; border: none; padding: 6px 14px;
@@ -80,7 +87,7 @@ body.has-selection { padding-bottom: 100px; }
 
 /* ===== FILTERS ===== */
 .filters {
-  background: #374151; color: #F3F4F6;
+  background: #1F2937; color: #F3F4F6;
   padding: 10px 20px 12px;
   display: flex; flex-direction: column; gap: 8px; font-size: 13px;
 }
@@ -922,25 +929,52 @@ function updateProgress() {
   const visibleRooms = state.data.rooms.filter(matchesFilters);
   const total = visibleRooms.length;
   let done = 0;
+  let totalArea = 0, doneArea = 0;
 
   visibleRooms.forEach(r => {
     const wks = state.data.assignments[r.num] || {};
+    const area = parseFloat(String(r.area || '').replace(',', '.').replace(/\s/g, '')) || 0;
+    totalArea += area;
+
+    let isDone = false;
     if (work) {
       const a = wks[work];
-      if (a && a.sp && a.date && (seesAll || a.sp === userName)) done++;
+      if (a && a.sp && a.date && (seesAll || a.sp === userName)) isDone = true;
     } else {
-      // помещение «готово» если все назначения готовы (хоть одно должно быть)
       const list = Object.values(wks).filter(x => seesAll ? !!x.sp : x.sp === userName);
-      if (list.length > 0 && list.every(x => x.date)) done++;
+      if (list.length > 0 && list.every(x => x.date)) isDone = true;
     }
+    if (isDone) { done++; doneArea += area; }
   });
 
-  const pct = total > 0 ? Math.round((done * 100) / total) : 0;
+  const rest = total - done;
+  const restArea = totalArea - doneArea;
   const workLabel = work ? (state.data.works.find(w => w.id_raboty === work) || {}).full_name : null;
-  const label = workLabel
-    ? `Помещений: ${total} · Готово ${done} (${pct}%) · «${workLabel}»`
-    : `Помещений: ${total} · Готово ${done} (${pct}%)`;
-  document.getElementById('progressEl').textContent = label;
+
+  const fmtN = (n) => Math.round(n).toLocaleString('ru-RU').replace(/,/g, ' ');
+  const fmtArea = (n) => Math.round(n).toLocaleString('ru-RU').replace(/,/g, ' ');
+
+  const progressEl = document.getElementById('progressEl');
+  progressEl.innerHTML = `
+    <div class="metric">
+      <span class="label">Помещений</span>
+      <span class="total">${fmtN(total)}</span>
+      <span class="sep">·</span>
+      <span class="done">${fmtN(done)}</span>
+      <span class="sep">·</span>
+      <span class="rest">${fmtN(rest)}</span>
+      ${workLabel ? `<span class="work-name">«${escapeHtml(workLabel)}»</span>` : ''}
+    </div>
+    <div class="metric">
+      <span class="label">Площадь</span>
+      <span class="total">${fmtArea(totalArea)}</span>
+      <span class="sep">·</span>
+      <span class="done">${fmtArea(doneArea)}</span>
+      <span class="sep">·</span>
+      <span class="rest">${fmtArea(restArea)}</span>
+      <span class="label" style="text-transform:none;letter-spacing:0">м²</span>
+    </div>
+  `;
 
   // toggle "hide done" availability
   const tg = document.getElementById('toggleDoneLabel');
