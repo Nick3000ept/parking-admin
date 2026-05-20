@@ -715,9 +715,16 @@ function buildCard(room) {
   let isDone = false;
 
   if (!work) {
-    // Работа не выбрана — карточка информативна, цвет по типу
-    const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
-    card.style.background = color;
+    // Работа не выбрана — карточка информативна
+    // Если все назначенные работы готовы — зелёная; иначе цвет по типу
+    const assignedList = Object.values(assignments).filter(a => a.sp);
+    const allDone = assignedList.length > 0 && assignedList.every(a => a.date);
+    if (allDone) {
+      card.classList.add('done');
+    } else {
+      const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
+      card.style.background = color;
+    }
   } else {
     const a = assignments[work];
     const sp = a ? a.sp : '';
