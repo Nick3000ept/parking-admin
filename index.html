@@ -15,6 +15,7 @@ body.mark-mode-active .header { background: #047857; transition: background 0.2s
   display: flex; align-items: center; gap: 12px;
   padding: 10px 20px; background: #1F2937; color: #fff;
   position: sticky; top: 0; z-index: 50;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .header h1 { font-size: 18px; font-weight: 600; }
 .header .progress { font-size: 14px; opacity: 0.85; flex: 1; }
@@ -79,7 +80,8 @@ body.has-selection { padding-bottom: 100px; }
 
 /* ===== FILTERS ===== */
 .filters {
-  background: #fff; padding: 10px 20px 12px; border-bottom: 1px solid #E5E7EB;
+  background: #1F2937; color: #F3F4F6;
+  padding: 10px 20px 12px;
   display: flex; flex-direction: column; gap: 8px; font-size: 13px;
 }
 .filters-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
@@ -90,7 +92,7 @@ body.has-selection { padding-bottom: 100px; }
 }
 .filter-group .group-content { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .filters .chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.filters-divider { color: #E5E7EB; }
+.filters-divider { color: rgba(255,255,255,0.2); }
 .chip {
   padding: 2px 9px; background: #F3F4F6; border: 1px solid #D1D5DB;
   border-radius: 12px; cursor: pointer; user-select: none; font-size: 11px;
@@ -98,14 +100,25 @@ body.has-selection { padding-bottom: 100px; }
 }
 .chip:hover { background: #E5E7EB; }
 .chip.active { background: #1F2937; color: #fff; border-color: #1F2937; }
+/* В тёмной панели фильтров чипсы тоже тёмные */
+.filters .chip {
+  background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18);
+  color: #F3F4F6;
+}
+.filters .chip:hover { background: rgba(255,255,255,0.18); }
+.filters .chip.active { background: #fff; color: #1F2937; border-color: #fff; }
 .filters input[type="text"] {
-  padding: 3px 8px; border: 1px solid #D1D5DB; border-radius: 4px;
+  padding: 3px 8px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;
   font-size: 12px; width: 140px;
+  background: rgba(255,255,255,0.08); color: #fff;
 }
+.filters input[type="text"]::placeholder { color: rgba(255,255,255,0.4); }
 .filters select {
-  padding: 3px 8px; border: 1px solid #D1D5DB; border-radius: 4px;
+  padding: 3px 8px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;
   font-size: 12px; min-width: 160px;
+  background: rgba(255,255,255,0.08); color: #fff;
 }
+.filters select option { background: #1F2937; color: #fff; }
 .filters .toggle-row { display: flex; gap: 14px; align-items: center; font-size: 12px; }
 .toggle { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .toggle input { cursor: pointer; }
