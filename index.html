@@ -32,14 +32,29 @@ body { min-width: 1024px; min-height: 100vh; }
 .header .user-badge.admin { background: #DC2626; }
 .header .user-badge.viewer { background: #6B7280; }
 .header .selection-info {
-  background: #2563EB; color: #fff; padding: 4px 10px; border-radius: 4px;
-  display: flex; gap: 10px; align-items: center; font-size: 13px;
+  background: #2563EB; color: #fff; padding: 5px 10px; border-radius: 4px;
+  display: flex; gap: 8px; align-items: center; font-size: 13px;
+  max-width: 60vw;
 }
 .header .selection-info button {
   background: rgba(255,255,255,0.2); border: none; color: #fff;
   padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;
+  flex-shrink: 0;
 }
 .header .selection-info button:hover { background: rgba(255,255,255,0.35); }
+.header .selection-tags {
+  display: flex; flex-wrap: wrap; gap: 3px;
+  max-height: 50px; overflow-y: auto;
+  padding: 2px 4px; min-width: 0;
+}
+.header .selection-tag {
+  background: rgba(255,255,255,0.22); color: #fff;
+  padding: 2px 6px; border-radius: 9px; font-size: 11px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+.header .selection-tag:hover { background: rgba(255,255,255,0.4); }
+.header .selection-tag::after { content: ' ×'; opacity: 0.7; }
+.header #selectionText { font-weight: 600; flex-shrink: 0; }
 
 /* ===== FILTERS ===== */
 .filters {
@@ -136,7 +151,6 @@ body { min-width: 1024px; min-height: 100vh; }
 .card.dimmed:hover { transform: none; box-shadow: none; }
 .card.done { background: #34D399; color: #fff; }
 .card.done-other { background: #34D399; opacity: 0.5; color: #fff; }
-.card.selected { outline: 3px solid #2563EB; outline-offset: -2px; z-index: 2; }
 .card.markable {
   outline: 2px dashed #10B981; outline-offset: -2px;
 }
@@ -144,6 +158,11 @@ body { min-width: 1024px; min-height: 100vh; }
   outline: 3px solid #10B981;
   box-shadow: 0 0 0 4px rgba(16,185,129,0.2), 0 4px 8px rgba(0,0,0,0.15);
   transform: translateY(-2px);
+}
+.card.selected, .card.selected.markable {
+  outline: 3px solid #2563EB; outline-offset: -2px;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.25);
+  z-index: 2;
 }
 .card.done::after {
   content: '✓'; position: absolute; right: 4px; top: 2px;
@@ -240,6 +259,7 @@ body { min-width: 1024px; min-height: 100vh; }
   <div class="progress" id="progressEl"></div>
   <div class="selection-info" id="selectionInfo" style="display:none">
     <span id="selectionText"></span>
+    <div class="selection-tags" id="selectionTags"></div>
     <button id="clearSelectionBtn">× Снять</button>
   </div>
   <div class="actions">
@@ -589,24 +609,61 @@ function renderWorkTabs() {
   });
 }
 
+function parseRoomNum(s) {
+  // "7.-3.01" → {korp:7, floor:-3, idx:1}; "П1.-3.01" → буквенные сортируются после числовых
+  const m = /^([A-Za-zА-Яа-я0-9]+)\.(-?\d+)\.(\d+)/.exec(String(s));
+  if (!m) return { korp: 99999, floor: 0, idx: 0 };
+  const korpStr = m[1];
+  const korpNum = Number(korpStr);
+  const korp = isNaN(korpNum) ? 10000 + korpStr.charCodeAt(0) : korpNum;
+  return { korp, floor: Number(m[2]), idx: Number(m[3]) };
+}
+function sortRoomNums(arr) {
+  return arr.slice().sort((a, b) => {
+    const pa = parseRoomNum(a), pb = parseRoomNum(b);
+    if (pa.korp !== pb.korp) return pa.korp - pb.korp;
+    if (pa.floor !== pb.floor) return pa.floor - pb.floor;
+    return pa.idx - pb.idx;
+  });
+}
+
 function updateSelectionInfo() {
   const info = document.getElementById('selectionInfo');
   const txt = document.getElementById('selectionText');
+  const tagsEl = document.getElementById('selectionTags');
   if (state.selected.size === 0) {
     info.style.display = 'none';
+    tagsEl.innerHTML = '';
     return;
   }
-  // Суммарная площадь по выбранным помещениям
+  // Суммарная площадь
   let totalArea = 0;
   state.selected.forEach(num => {
     const room = state.data.rooms.find(r => r.num === num);
     if (!room) return;
-    // Площадь в формате "4,19" — парсим
     const a = parseFloat(String(room.area).replace(',', '.').replace(/\s/g, ''));
     if (!isNaN(a)) totalArea += a;
   });
   const areaStr = totalArea.toFixed(2).replace('.', ',');
-  txt.textContent = `Выбрано: ${state.selected.size} помещений · ${areaStr} м²`;
+  txt.textContent = `Выбрано ${state.selected.size} · ${areaStr} м²`;
+
+  // Теги выбранных, отсортированные
+  const sorted = sortRoomNums(Array.from(state.selected));
+  tagsEl.innerHTML = '';
+  sorted.forEach(num => {
+    const tag = document.createElement('span');
+    tag.className = 'selection-tag';
+    tag.textContent = num;
+    tag.title = 'Клик — убрать из выделения';
+    tag.addEventListener('click', () => {
+      state.selected.delete(num);
+      const card = document.querySelector('.card[data-num="' + cssEscape(num) + '"]');
+      if (card) card.classList.remove('selected');
+      updateSelectionInfo();
+    });
+    tagsEl.appendChild(tag);
+  });
+
   info.style.display = 'flex';
 }
 
