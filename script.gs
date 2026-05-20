@@ -10,9 +10,9 @@ const CONFIG = {
   SPREADSHEET_ID: '1zB1IQJlla93txI9o-sH-mxD3CeeO0Ugkv8mHPDzcqiI',
 
   SHEET_GLAVNY: 'Главный',
-  SHEET_RABOTY: 'Работы',
-  SHEET_PODRYADCHIKI: 'Подрядчики',
-  SHEET_TIPY: 'Типы помещений',
+  SHEET_RABOTY: 'Ведомость_работ',
+  SHEET_PODRYADCHIKI: 'Ведомость_подрядчиков',
+  SHEET_TIPY: 'Типы_помещений',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -643,7 +643,8 @@ function assertWritableColumn(col) {
 function formatNumber(v) {
   if (v === '' || v === null || v === undefined) return '';
   if (typeof v === 'number') {
-    return String(v).replace('.', ',');
+    // округление до 2 знаков чтобы не было артефактов вроде 26.369999999999997
+    return String(Math.round(v * 100) / 100).replace('.', ',');
   }
   return String(v);
 }

@@ -1,0 +1,14 @@
+# Файлы которые НЕ должны попадать в Apps Script проект (только бэкенд там)
+
+# Frontend — на GitHub Pages, не нужен в GAS
+index.html
+
+# Документация и операционные файлы — только локально
+*.md
+
+# Git и конфиги
+.git/**
+.gitignore
+.clasp.json
+.claspignore
+config.local.js
