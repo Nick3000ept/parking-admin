@@ -71,10 +71,10 @@ body.has-selection { padding-bottom: 100px; }
 
 /* ===== FILTERS ===== */
 .filters {
-  background: #fff; padding: 6px 20px 8px; border-bottom: 1px solid #E5E7EB;
-  display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+  background: #fff; padding: 10px 20px 12px; border-bottom: 1px solid #E5E7EB;
+  display: flex; flex-direction: column; gap: 8px; font-size: 13px;
 }
-.filters-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.filters-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .filter-group { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 .filter-group .group-label {
   font-weight: 600; color: #9CA3AF; text-transform: uppercase;
@@ -272,6 +272,7 @@ body.has-selection { padding-bottom: 100px; }
   <button class="icon-btn" id="refreshBtn" title="Обновить данные">↻</button>
   <div class="progress" id="progressEl"></div>
   <div class="actions">
+    <button id="clearFiltersBtn" title="Сбросить все фильтры">× Очистить фильтры</button>
     <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
   </div>
 </div>
@@ -292,9 +293,7 @@ body.has-selection { padding-bottom: 100px; }
       <div class="group-label">Этаж</div>
       <div class="group-content"><div class="chips" id="filterFloor"></div></div>
     </div>
-  </div>
-
-  <div class="filters-row">
+    <span class="filters-divider">│</span>
     <div class="filter-group">
       <div class="group-label">Тип</div>
       <div class="group-content">
@@ -303,21 +302,21 @@ body.has-selection { padding-bottom: 100px; }
         </select>
       </div>
     </div>
-    <span class="filters-divider">│</span>
+  </div>
+
+  <div class="filters-row">
     <div class="filter-group">
-      <div class="group-label">Номер</div>
-      <div class="group-content"><input type="text" id="searchNum" placeholder="7.-3.01"></div>
-    </div>
-    <div class="filter-group">
-      <div class="group-label">Назначение</div>
-      <div class="group-content"><input type="text" id="searchName" placeholder="Кладовая"></div>
+      <div class="group-label">Поиск по номеру и названию</div>
+      <div class="group-content">
+        <input type="text" id="searchNum" placeholder="7.-3.01">
+        <input type="text" id="searchName" placeholder="Кладовая">
+      </div>
     </div>
     <span class="filters-divider">│</span>
     <div class="toggle-row">
       <label class="toggle" id="toggleDoneLabel">
         <input type="checkbox" id="toggleHideDone"> Скрыть готовые
       </label>
-      <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
     </div>
   </div>
 </div>
