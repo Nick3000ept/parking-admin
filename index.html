@@ -595,23 +595,22 @@ function renderWorkTabs() {
   allBtn.addEventListener('click', () => selectWork(''));
   tabsEl.appendChild(allBtn);
 
-  // Groups
-  groupOrder.forEach(surface => {
-    const groupEl = document.createElement('div');
-    groupEl.className = 'work-group';
-    const label = document.createElement('span');
-    label.className = 'group-label';
-    label.textContent = surface;
-    groupEl.appendChild(label);
+  // Чипсы работ, сгруппированные по поверхности — между группами тонкий разделитель
+  groupOrder.forEach((surface, idx) => {
+    if (idx > 0) {
+      const div = document.createElement('span');
+      div.style.color = '#D1D5DB';
+      div.textContent = '│';
+      tabsEl.appendChild(div);
+    }
     groups[surface].forEach(w => {
       const btn = document.createElement('button');
       btn.className = 'work-tab' + (current === w.id_raboty ? ' active' : '');
       btn.textContent = w.short_name || w.full_name;
-      btn.title = w.full_name;
+      btn.title = w.full_name + ' · ' + surface;
       btn.addEventListener('click', () => selectWork(w.id_raboty));
-      groupEl.appendChild(btn);
+      tabsEl.appendChild(btn);
     });
-    tabsEl.appendChild(groupEl);
   });
 }
 
