@@ -204,13 +204,13 @@ body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidde
   <div class="label">Этаж</div>
   <div class="chips" id="filterFloor"></div>
 
-  <div class="label">Тип</div>
-  <div class="chips" id="filterTip"></div>
-
-  <div class="label">Работа</div>
-  <div>
+  <div class="label">Работа / Тип</div>
+  <div style="display:flex;gap:8px">
     <select id="filterWork">
       <option value="">— Все работы (без выбора) —</option>
+    </select>
+    <select id="filterTip">
+      <option value="">— Все типы помещений —</option>
     </select>
   </div>
 
@@ -310,7 +310,7 @@ const state = {
     zahvatka: new Set(),
     korp: new Set(),
     floor: new Set(),
-    tip: new Set(),
+    tip: '',
     work: '',
     searchNum: '',
     searchName: '',
@@ -437,7 +437,18 @@ function renderFilters() {
   renderChips('filterZahvatka', uniqueSorted(rooms.map(r => r.zahvatka).filter(Boolean)), 'zahvatka');
   renderChips('filterKorp', sortKorps(uniqueSorted(rooms.map(r => r.korp).filter(Boolean))), 'korp');
   renderChips('filterFloor', uniqueSorted(rooms.map(r => r.floor).filter(Boolean)).sort((a, b) => Number(a) - Number(b)), 'floor');
-  renderChips('filterTip', uniqueSorted(rooms.map(r => r.tip_panel).filter(Boolean)), 'tip');
+
+  // Заполняем dropdown типов помещений
+  const tipSel = document.getElementById('filterTip');
+  const currentTip = state.filters.tip;
+  tipSel.innerHTML = '<option value="">— Все типы помещений —</option>';
+  uniqueSorted(rooms.map(r => r.tip_panel).filter(Boolean)).forEach(t => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t;
+    if (t === currentTip) o.selected = true;
+    tipSel.appendChild(o);
+  });
 
   const workSel = document.getElementById('filterWork');
   workSel.innerHTML = '<option value="">— Все работы (без выбора) —</option>';
@@ -614,7 +625,7 @@ function matchesFilters(room) {
   if (f.zahvatka.size && !f.zahvatka.has(room.zahvatka)) return false;
   if (f.korp.size && !f.korp.has(room.korp)) return false;
   if (f.floor.size && !f.floor.has(room.floor)) return false;
-  if (f.tip.size && !f.tip.has(room.tip_panel)) return false;
+  if (f.tip && f.tip !== room.tip_panel) return false;
   if (f.searchNum && !room.num.toLowerCase().includes(f.searchNum.toLowerCase())) return false;
   if (f.searchName && !room.name.toLowerCase().includes(f.searchName.toLowerCase()) && !room.ks.toLowerCase().includes(f.searchName.toLowerCase())) return false;
 
@@ -862,6 +873,11 @@ function bindUI() {
     updateProgress();
   });
 
+  document.getElementById('filterTip').addEventListener('change', e => {
+    state.filters.tip = e.target.value;
+    renderMatrix();
+  });
+
   document.getElementById('searchNum').addEventListener('input', e => {
     state.filters.searchNum = e.target.value;
     renderMatrix();
@@ -884,13 +900,14 @@ function bindUI() {
     state.filters.zahvatka.clear();
     state.filters.korp.clear();
     state.filters.floor.clear();
-    state.filters.tip.clear();
+    state.filters.tip = '';
     state.filters.work = '';
     state.filters.searchNum = '';
     state.filters.searchName = '';
     state.filters.hideDone = false;
     state.filters.hideOthers = false;
     document.getElementById('filterWork').value = '';
+    document.getElementById('filterTip').value = '';
     document.getElementById('searchNum').value = '';
     document.getElementById('searchName').value = '';
     document.getElementById('toggleHideDone').checked = false;
