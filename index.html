@@ -866,36 +866,75 @@ function updateProgress() {
 // ============================================================================
 // Actions
 // ============================================================================
+function todayLocal() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function buildHint(num, idRaboty) {
+  const room = state.data.rooms.find(r => r.num === num);
+  const cols = state.data.work_cols && state.data.work_cols[idRaboty];
+  if (!room || !cols || !cols.col_date || !cols.col_sp) return null;
+  return { row: room.row, colDate: cols.col_date, colSp: cols.col_sp };
+}
+
 async function setMark(num, idRaboty) {
-  const result = await postAction('setDate', { num, id_raboty: idRaboty });
+  // Optimistic update: меняем state и перерисовываем только эту карточку
+  if (!state.data.assignments[num]) state.data.assignments[num] = {};
+  if (!state.data.assignments[num][idRaboty]) state.data.assignments[num][idRaboty] = { sp: '', date: '' };
+  const prev = Object.assign({}, state.data.assignments[num][idRaboty]);
+  state.data.assignments[num][idRaboty].date = todayLocal();
+  refreshCard(num);
+  updateProgress();
+  refreshPopupIfOpen(num);
+
+  const result = await postAction('setDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
   if (!result.ok) {
+    // Rollback
+    state.data.assignments[num][idRaboty] = prev;
+    refreshCard(num);
+    updateProgress();
+    refreshPopupIfOpen(num);
     toast('Не удалось: ' + (result.error || 'ошибка'), true);
     return;
   }
-  // Update local state
-  if (!state.data.assignments[num]) state.data.assignments[num] = {};
-  if (!state.data.assignments[num][idRaboty]) state.data.assignments[num][idRaboty] = { sp: '', date: '' };
+  // Применяем серверную дату (она может отличаться от локальной если разница часовых поясов)
   state.data.assignments[num][idRaboty].date = result.date;
+  refreshCard(num);
   saveCache();
-  renderMatrix();
-  updateProgress();
-  // If popup is open for this room — refresh it
-  refreshPopupIfOpen(num);
 }
 
 async function clearMark(num, idRaboty) {
-  const result = await postAction('clearDate', { num, id_raboty: idRaboty });
+  if (!state.data.assignments[num] || !state.data.assignments[num][idRaboty]) return;
+  const prev = Object.assign({}, state.data.assignments[num][idRaboty]);
+  state.data.assignments[num][idRaboty].date = '';
+  refreshCard(num);
+  updateProgress();
+  refreshPopupIfOpen(num);
+
+  const result = await postAction('clearDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
   if (!result.ok) {
+    state.data.assignments[num][idRaboty] = prev;
+    refreshCard(num);
+    updateProgress();
+    refreshPopupIfOpen(num);
     toast('Не удалось: ' + (result.error || 'ошибка'), true);
     return;
   }
-  if (state.data.assignments[num] && state.data.assignments[num][idRaboty]) {
-    state.data.assignments[num][idRaboty].date = '';
-  }
   saveCache();
-  renderMatrix();
-  updateProgress();
-  refreshPopupIfOpen(num);
+}
+
+function refreshCard(num) {
+  const oldCard = document.querySelector('.card[data-num="' + cssEscape(num) + '"]');
+  if (!oldCard) return;
+  const room = state.data.rooms.find(r => r.num === num);
+  if (!room) return;
+  const newCard = buildCard(room);
+  oldCard.parentNode.replaceChild(newCard, oldCard);
+}
+
+function cssEscape(s) {
+  return String(s).replace(/(["\\\.])/g, '\\$1');
 }
 
 async function postAction(action, payload) {
@@ -912,8 +951,16 @@ async function postAction(action, payload) {
   }
 }
 
+let saveCacheTimer = null;
 function saveCache() {
-  localStorage.setItem(STORAGE_DATA_PREFIX + state.token, JSON.stringify(state.data));
+  // Defer + debounce: stringify ~1MB снапшота не блокирует UI после клика
+  if (saveCacheTimer) clearTimeout(saveCacheTimer);
+  saveCacheTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_DATA_PREFIX + state.token, JSON.stringify(state.data));
+    } catch (e) { /* quota / serialize fail — игнор */ }
+    saveCacheTimer = null;
+  }, 300);
 }
 
 // ============================================================================

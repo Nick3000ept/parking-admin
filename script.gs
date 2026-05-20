@@ -78,10 +78,10 @@ function doPost(e) {
     }
 
     if (body.action === 'setDate') {
-      return jsonResponse(setDate(user, body.num, body.id_raboty));
+      return jsonResponse(setDate(user, body.num, body.id_raboty, body.hint));
     }
     if (body.action === 'clearDate') {
-      return jsonResponse(clearDate(user, body.num, body.id_raboty));
+      return jsonResponse(clearDate(user, body.num, body.id_raboty, body.hint));
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
@@ -286,10 +286,10 @@ function computeVersionHash(headers, worksCount, tipyCount) {
 // Write actions
 // =============================================================================
 
-function setDate(user, num, idRaboty) {
+function setDate(user, num, idRaboty, hint) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
 
-  const cell = locateCell(num, idRaboty);
+  const cell = resolveCell_(num, idRaboty, hint);
   if (cell.error) return { ok: false, error: cell.error };
 
   // Проверка прав
@@ -321,10 +321,10 @@ function setDate(user, num, idRaboty) {
   };
 }
 
-function clearDate(user, num, idRaboty) {
+function clearDate(user, num, idRaboty, hint) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
 
-  const cell = locateCell(num, idRaboty);
+  const cell = resolveCell_(num, idRaboty, hint);
   if (cell.error) return { ok: false, error: cell.error };
 
   if (!user.isAdmin) {
@@ -342,6 +342,45 @@ function clearDate(user, num, idRaboty) {
   sheet.getRange(cell.row, cell.colDate).clearContent();
 
   return { ok: true, date: '', num: num, id_raboty: idRaboty };
+}
+
+/**
+ * Fast path: если фронт передал hint (row + colDate + colSp), читаем только
+ * нужный диапазон. Защита — проверяем что в hint.row реально стоит ожидаемый
+ * Номер; если нет — fallback на полный locateCell (Sheets могли поменять).
+ */
+function resolveCell_(num, idRaboty, hint) {
+  if (hint && hint.row && hint.colDate && hint.colSp &&
+      hint.colDate > CONFIG.REGISTRY_LAST_COL && hint.colSp > CONFIG.REGISTRY_LAST_COL) {
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+    if (!sheet) return { error: 'Лист "' + CONFIG.SHEET_GLAVNY + '" не найден' };
+
+    // Один батч-чтение: A (Номер) + два значения дата/СП
+    const fromCol = Math.min(CONFIG.COL_NUM, hint.colDate, hint.colSp);
+    const toCol = Math.max(CONFIG.COL_NUM, hint.colDate, hint.colSp);
+    const values = sheet.getRange(hint.row, fromCol, 1, toCol - fromCol + 1).getValues()[0];
+    const actualNum = String(values[CONFIG.COL_NUM - fromCol] || '').trim();
+
+    if (actualNum === String(num).trim()) {
+      const dateVal = values[hint.colDate - fromCol];
+      const spVal = values[hint.colSp - fromCol];
+      var dateStr = '';
+      if (dateVal instanceof Date) {
+        dateStr = Utilities.formatDate(dateVal, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+      } else if (dateVal !== '' && dateVal !== null && dateVal !== undefined) {
+        dateStr = String(dateVal);
+      }
+      return {
+        row: hint.row,
+        colDate: hint.colDate,
+        colSp: hint.colSp,
+        spValue: spVal ? String(spVal).trim() : '',
+        currentDate: dateStr
+      };
+    }
+    // Hint протух — fallback
+  }
+  return locateCell(num, idRaboty);
 }
 
 function locateCell(num, idRaboty) {
