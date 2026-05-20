@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1024">
+<title>Паркинг СБ3</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1F2937; background: #F3F4F6; }
+body { display: flex; flex-direction: column; min-width: 1024px; overflow: hidden; }
+
+/* ===== HEADER ===== */
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 20px; background: #1F2937; color: #fff;
+  flex-shrink: 0;
+}
+.header h1 { font-size: 18px; font-weight: 600; }
+.header .progress { font-size: 14px; opacity: 0.85; margin-left: 24px; flex: 1; }
+.header .actions { display: flex; gap: 10px; align-items: center; }
+.header button {
+  background: #374151; color: #fff; border: none; padding: 6px 14px;
+  border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.header button:hover { background: #4B5563; }
+.header .user-badge {
+  background: #6366F1; padding: 6px 10px; border-radius: 4px; font-size: 13px;
+}
+.header .user-badge.admin { background: #DC2626; }
+
+/* ===== FILTERS ===== */
+.filters {
+  background: #fff; padding: 12px 20px; border-bottom: 1px solid #E5E7EB;
+  flex-shrink: 0; display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px;
+  align-items: center; font-size: 13px;
+}
+.filters .label { font-weight: 600; color: #6B7280; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+.filters .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 4px 12px; background: #F3F4F6; border: 1px solid #D1D5DB;
+  border-radius: 14px; cursor: pointer; user-select: none; font-size: 12px;
+  transition: all 0.1s;
+}
+.chip:hover { background: #E5E7EB; }
+.chip.active { background: #1F2937; color: #fff; border-color: #1F2937; }
+.filters input[type="text"] {
+  padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 4px;
+  font-size: 13px; width: 180px;
+}
+.filters select {
+  padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 4px;
+  font-size: 13px; min-width: 180px;
+}
+.filters .toggle-row { display: flex; gap: 16px; align-items: center; }
+.toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.toggle input { cursor: pointer; }
+.toggle.disabled { opacity: 0.4; cursor: not-allowed; }
+.filters .actions-row { display: flex; gap: 8px; }
+.filters .clear-btn {
+  padding: 4px 10px; background: #fff; border: 1px solid #D1D5DB;
+  border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.filters .clear-btn:hover { background: #F9FAFB; }
+
+/* ===== MATRIX ===== */
+.matrix-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 8px 20px 20px; }
+.matrix-col-headers {
+  display: grid; gap: 4px; margin-left: 44px; margin-bottom: 4px;
+  font-size: 12px; font-weight: 600; color: #6B7280; text-align: center;
+}
+.matrix {
+  flex: 1; display: grid; gap: 4px; padding-left: 40px; position: relative;
+}
+.matrix .row-label {
+  position: absolute; left: 0; width: 36px; display: flex; align-items: center;
+  justify-content: center; font-weight: 600; color: #6B7280; font-size: 14px;
+  background: #fff; border-radius: 4px; border: 1px solid #E5E7EB;
+}
+.cell {
+  background: #fff; border: 1px solid #E5E7EB; border-radius: 4px;
+  padding: 6px; overflow-y: auto; min-height: 60px;
+  display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;
+}
+.cell::-webkit-scrollbar { width: 6px; }
+.cell::-webkit-scrollbar-track { background: transparent; }
+.cell::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
+
+/* ===== CARDS ===== */
+.card {
+  width: 80px; height: 40px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; cursor: pointer; user-select: none;
+  position: relative; background: #E5E7EB; color: #1F2937;
+  border: 1px solid transparent;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.card:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+.card.dimmed { opacity: 0.4; cursor: default; }
+.card.dimmed:hover { transform: none; box-shadow: none; }
+.card.done { background: #34D399; color: #fff; }
+.card.done-other { background: #34D399; opacity: 0.5; color: #fff; }
+.card .checkbox {
+  position: absolute; right: 3px; top: 3px;
+  width: 12px; height: 12px; border: 1px solid rgba(0,0,0,0.4);
+  border-radius: 2px; background: rgba(255,255,255,0.6);
+  display: flex; align-items: center; justify-content: center; font-size: 9px;
+}
+.card.done .checkbox, .card.done-other .checkbox {
+  background: #fff; border-color: #fff; color: #34D399;
+}
+.card .num { font-size: 11px; }
+
+/* ===== POPUP ===== */
+.popup-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.popup-overlay.show { display: flex; }
+.popup {
+  background: #fff; border-radius: 8px; padding: 20px;
+  min-width: 480px; max-width: 600px; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+.popup-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+.popup-title { font-size: 18px; font-weight: 600; }
+.popup-subtitle { color: #6B7280; font-size: 13px; margin-top: 2px; }
+.popup-close {
+  background: none; border: none; font-size: 24px; color: #9CA3AF;
+  cursor: pointer; line-height: 1; padding: 0 4px;
+}
+.popup-close:hover { color: #1F2937; }
+.popup-meta {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+  padding: 10px 0; border-top: 1px solid #E5E7EB; border-bottom: 1px solid #E5E7EB;
+  font-size: 13px; color: #4B5563;
+}
+.popup-meta .label { color: #9CA3AF; font-size: 11px; text-transform: uppercase; }
+.popup-works { margin-top: 12px; }
+.popup-works h3 { font-size: 13px; color: #6B7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.popup-work-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 4px; margin-bottom: 4px; background: #F9FAFB;
+}
+.popup-work-row.done { background: #D1FAE5; }
+.popup-work-row.disabled { opacity: 0.6; }
+.popup-work-row .work-checkbox {
+  width: 18px; height: 18px; border: 2px solid #6B7280; border-radius: 3px;
+  background: #fff; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 13px;
+}
+.popup-work-row.done .work-checkbox { background: #10B981; border-color: #10B981; color: #fff; }
+.popup-work-row.read-only .work-checkbox { cursor: not-allowed; }
+.popup-work-row .work-info { flex: 1; }
+.popup-work-row .work-name { font-weight: 500; font-size: 14px; }
+.popup-work-row .work-meta { font-size: 12px; color: #6B7280; margin-top: 2px; }
+
+/* ===== STATES ===== */
+.state-screen {
+  position: fixed; inset: 0; background: #F3F4F6;
+  display: none; align-items: center; justify-content: center; z-index: 200;
+}
+.state-screen.show { display: flex; }
+.state-screen .panel {
+  background: #fff; padding: 32px 48px; border-radius: 8px; text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.state-screen .panel h2 { font-size: 20px; margin-bottom: 8px; }
+.state-screen .panel p { color: #6B7280; margin-bottom: 16px; }
+.state-screen .panel button {
+  background: #1F2937; color: #fff; border: none; padding: 8px 20px;
+  border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+
+/* ===== TOAST ===== */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; background: #1F2937; color: #fff;
+  padding: 12px 18px; border-radius: 4px; font-size: 14px; z-index: 300;
+  transform: translateY(100px); opacity: 0; transition: all 0.2s;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.error { background: #DC2626; }
+</style>
+</head>
+<body>
+
+<!-- ===== Main UI ===== -->
+<div class="header" id="headerEl" style="display:none">
+  <h1>Паркинг СБ3</h1>
+  <div class="progress" id="progressEl"></div>
+  <div class="actions">
+    <span class="user-badge" id="userBadge"></span>
+    <button id="refreshBtn">Обновить</button>
+    <button id="logoutBtn">Выйти</button>
+  </div>
+</div>
+
+<div class="filters" id="filtersEl" style="display:none">
+  <div class="label">Захватка</div>
+  <div class="chips" id="filterZahvatka"></div>
+
+  <div class="label">Корпус</div>
+  <div class="chips" id="filterKorp"></div>
+
+  <div class="label">Этаж</div>
+  <div class="chips" id="filterFloor"></div>
+
+  <div class="label">Тип</div>
+  <div class="chips" id="filterTip"></div>
+
+  <div class="label">Работа</div>
+  <div>
+    <select id="filterWork">
+      <option value="">— Все работы (без выбора) —</option>
+    </select>
+  </div>
+
+  <div class="label">Поиск</div>
+  <div style="display:flex;gap:8px">
+    <input type="text" id="searchNum" placeholder="По номеру (7.-3.01)">
+    <input type="text" id="searchName" placeholder="По назначению (Кладовая)">
+  </div>
+
+  <div class="label"></div>
+  <div class="toggle-row">
+    <label class="toggle" id="toggleDoneLabel">
+      <input type="checkbox" id="toggleHideDone"> Скрыть готовые
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="toggleHideOthers"> Скрыть чужие
+    </label>
+    <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
+  </div>
+</div>
+
+<div class="matrix-wrap" id="matrixWrap" style="display:none">
+  <div class="matrix-col-headers" id="matrixColHeaders"></div>
+  <div class="matrix" id="matrix"></div>
+</div>
+
+<!-- ===== Popup ===== -->
+<div class="popup-overlay" id="popupOverlay">
+  <div class="popup" id="popup"></div>
+</div>
+
+<!-- ===== State screens ===== -->
+<div class="state-screen" id="stateLoading">
+  <div class="panel">
+    <h2>Загружаем данные…</h2>
+    <p>~3-8 секунд</p>
+  </div>
+</div>
+
+<div class="state-screen" id="stateDenied">
+  <div class="panel">
+    <h2>Доступ закрыт</h2>
+    <p id="stateDeniedMsg">Откройте ссылку, выданную администратором.</p>
+  </div>
+</div>
+
+<div class="state-screen" id="stateEmpty">
+  <div class="panel">
+    <h2>Пока нет назначенных работ</h2>
+    <p>Если назначения скоро появятся — нажмите «Обновить».</p>
+    <button id="emptyRefreshBtn">Обновить</button>
+  </div>
+</div>
+
+<div class="state-screen" id="stateError">
+  <div class="panel">
+    <h2>Ошибка</h2>
+    <p id="stateErrorMsg"></p>
+    <button id="errorRetryBtn">Повторить</button>
+  </div>
+</div>
+
+<!-- ===== Toast ===== -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================================
+// CONFIG
+// ============================================================================
+const GAS_URL = 'PASTE_YOUR_GAS_WEB_APP_URL_HERE';
+
+const COLOR_PRESET = {
+  'Желтый':     '#FCD34D',
+  'Жёлтый':     '#FCD34D',
+  'Серый':      '#9CA3AF',
+  'Оранжевый':  '#FB923C',
+  'Красный':    '#F87171',
+  'Синий':      '#60A5FA',
+  'Розовый':    '#F472B6',
+  'Фиолетовый': '#A78BFA',
+  'Голубой':    '#67E8F9',
+  'Коричневый': '#B45309'
+  // Зелёный намеренно НЕ включён — он зарезервирован за "работа готова"
+};
+
+const DEFAULT_COLOR = '#E5E7EB';
+const STORAGE_TOKEN = 'parking_token';
+const STORAGE_DATA_PREFIX = 'parking_data_';
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  token: null,
+  data: null,
+  filters: {
+    zahvatka: new Set(),
+    korp: new Set(),
+    floor: new Set(),
+    tip: new Set(),
+    work: '',
+    searchNum: '',
+    searchName: '',
+    hideDone: false,
+    hideOthers: false
+  }
+};
+
+// ============================================================================
+// Boot
+// ============================================================================
+window.addEventListener('DOMContentLoaded', boot);
+
+async function boot() {
+  state.token = extractToken();
+  if (!state.token) {
+    showDenied('Токен не предоставлен. Откройте ссылку, выданную администратором.');
+    return;
+  }
+  bindUI();
+  await loadData(false);
+}
+
+function extractToken() {
+  const url = new URL(window.location.href);
+  const fromUrl = url.searchParams.get('t');
+  if (fromUrl) {
+    localStorage.setItem(STORAGE_TOKEN, fromUrl);
+    url.searchParams.delete('t');
+    window.history.replaceState({}, '', url.toString());
+    return fromUrl;
+  }
+  return localStorage.getItem(STORAGE_TOKEN);
+}
+
+// ============================================================================
+// Data loading
+// ============================================================================
+async function loadData(forceFresh) {
+  // Render from cache if available and !forceFresh
+  const cacheKey = STORAGE_DATA_PREFIX + state.token;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached && !forceFresh) {
+    try {
+      const parsed = JSON.parse(cached);
+      state.data = parsed;
+      renderApp();
+    } catch (e) { /* ignore */ }
+  } else {
+    showLoading();
+  }
+
+  // Fetch fresh
+  try {
+    const url = GAS_URL + '?action=load&token=' + encodeURIComponent(state.token);
+    const resp = await fetch(url, { method: 'GET' });
+    const data = await resp.json();
+
+    if (!data.ok) {
+      if (data.error === 'Доступ закрыт' || /Доступ/i.test(data.error || '')) {
+        localStorage.removeItem(cacheKey);
+        showDenied(data.error || 'Доступ закрыт');
+        return;
+      }
+      showError(data.error || 'Неизвестная ошибка');
+      return;
+    }
+
+    state.data = data;
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+    renderApp();
+  } catch (err) {
+    if (!state.data) {
+      showError('Не удалось загрузить данные: ' + err.message);
+    } else {
+      toast('Не удалось обновить (нет сети). Показан кеш.', true);
+    }
+  }
+}
+
+// ============================================================================
+// Rendering
+// ============================================================================
+function renderApp() {
+  hideAllStates();
+  if (!state.data || !state.data.rooms || state.data.rooms.length === 0) {
+    document.getElementById('stateEmpty').classList.add('show');
+    return;
+  }
+
+  // Check if user has any assignments (only for non-admin)
+  if (!state.data.user.isAdmin) {
+    const hasAny = state.data.rooms.some(r => {
+      const a = state.data.assignments[r.num] || {};
+      return Object.values(a).some(x => x.sp === state.data.user.name);
+    });
+    if (!hasAny) {
+      document.getElementById('stateEmpty').classList.add('show');
+      return;
+    }
+  }
+
+  document.getElementById('headerEl').style.display = 'flex';
+  document.getElementById('filtersEl').style.display = 'grid';
+  document.getElementById('matrixWrap').style.display = 'flex';
+
+  renderHeader();
+  renderFilters();
+  renderMatrix();
+  updateProgress();
+}
+
+function renderHeader() {
+  const u = state.data.user;
+  const badge = document.getElementById('userBadge');
+  badge.textContent = u.name;
+  badge.classList.toggle('admin', u.isAdmin);
+}
+
+function renderFilters() {
+  const rooms = state.data.rooms;
+  const works = state.data.works;
+
+  renderChips('filterZahvatka', uniqueSorted(rooms.map(r => r.zahvatka).filter(Boolean)), 'zahvatka');
+  renderChips('filterKorp', sortKorps(uniqueSorted(rooms.map(r => r.korp).filter(Boolean))), 'korp');
+  renderChips('filterFloor', uniqueSorted(rooms.map(r => r.floor).filter(Boolean)).sort((a, b) => Number(a) - Number(b)), 'floor');
+  renderChips('filterTip', uniqueSorted(rooms.map(r => r.tip_panel).filter(Boolean)), 'tip');
+
+  const workSel = document.getElementById('filterWork');
+  workSel.innerHTML = '<option value="">— Все работы (без выбора) —</option>';
+
+  // For contractor: only works where they're assigned somewhere
+  const userName = state.data.user.name;
+  const isAdmin = state.data.user.isAdmin;
+  const availableWorkIds = new Set();
+  for (const num in state.data.assignments) {
+    const wks = state.data.assignments[num];
+    for (const wid in wks) {
+      if (isAdmin || wks[wid].sp === userName) {
+        availableWorkIds.add(wid);
+      }
+    }
+  }
+  works.forEach(w => {
+    if (!isAdmin && !availableWorkIds.has(w.id_raboty)) return;
+    const o = document.createElement('option');
+    o.value = w.id_raboty;
+    o.textContent = w.full_name + (w.surface ? ' (' + w.surface + ')' : '');
+    workSel.appendChild(o);
+  });
+}
+
+function renderChips(containerId, items, filterKey) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  items.forEach(v => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = v;
+    chip.dataset.value = v;
+    if (state.filters[filterKey].has(v)) chip.classList.add('active');
+    chip.addEventListener('click', () => {
+      if (state.filters[filterKey].has(v)) state.filters[filterKey].delete(v);
+      else state.filters[filterKey].add(v);
+      chip.classList.toggle('active');
+      renderMatrix();
+      updateProgress();
+    });
+    el.appendChild(chip);
+  });
+}
+
+function renderMatrix() {
+  const rooms = state.data.rooms;
+
+  // Compute visible floors and korps after filters
+  const visibleRooms = rooms.filter(r => matchesFilters(r));
+  const floors = uniqueSorted(visibleRooms.map(r => r.floor)).sort((a, b) => Number(a) - Number(b));
+  const korps = sortKorps(uniqueSorted(visibleRooms.map(r => r.korp)));
+
+  const matrix = document.getElementById('matrix');
+  const headers = document.getElementById('matrixColHeaders');
+
+  if (floors.length === 0 || korps.length === 0) {
+    matrix.innerHTML = '';
+    headers.innerHTML = '';
+    matrix.style.gridTemplateColumns = '';
+    matrix.style.gridTemplateRows = '';
+    matrix.innerHTML = '<div style="padding:30px;color:#6B7280;text-align:center;width:100%">Ничего не найдено по фильтрам</div>';
+    return;
+  }
+
+  matrix.style.gridTemplateColumns = `repeat(${korps.length}, 1fr)`;
+  matrix.style.gridTemplateRows = `repeat(${floors.length}, 1fr)`;
+  headers.style.gridTemplateColumns = `repeat(${korps.length}, 1fr)`;
+
+  headers.innerHTML = korps.map(k => `<div>К${k}</div>`).join('');
+
+  matrix.innerHTML = '';
+
+  // Row labels (absolute positioned)
+  floors.forEach((f, fi) => {
+    const lbl = document.createElement('div');
+    lbl.className = 'row-label';
+    lbl.style.top = `calc(${(fi / floors.length) * 100}% + 2px)`;
+    lbl.style.height = `calc(${100 / floors.length}% - 4px)`;
+    lbl.textContent = f;
+    matrix.appendChild(lbl);
+  });
+
+  // Build cells
+  for (let fi = 0; fi < floors.length; fi++) {
+    for (let ki = 0; ki < korps.length; ki++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const cellRooms = visibleRooms.filter(r => r.floor === floors[fi] && r.korp === korps[ki]);
+      cellRooms.forEach(r => cell.appendChild(buildCard(r)));
+      matrix.appendChild(cell);
+    }
+  }
+}
+
+function buildCard(room) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.num = room.num;
+
+  const num = document.createElement('div');
+  num.className = 'num';
+  num.textContent = room.num;
+  card.appendChild(num);
+
+  const work = state.filters.work;
+  const userName = state.data.user.name;
+  const isAdmin = state.data.user.isAdmin;
+  const assignments = state.data.assignments[room.num] || {};
+
+  if (!work) {
+    // No work selected — color by type
+    const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
+    card.style.background = color;
+  } else {
+    const a = assignments[work];
+    const sp = a ? a.sp : '';
+    const date = a ? a.date : '';
+
+    if (!sp) {
+      // Not assigned to anyone — dimmed grey
+      card.classList.add('dimmed');
+      card.style.background = DEFAULT_COLOR;
+    } else if (date) {
+      // Done
+      if (sp === userName || isAdmin) {
+        card.classList.add('done');
+      } else {
+        card.classList.add('done-other');
+      }
+      const cb = document.createElement('div');
+      cb.className = 'checkbox';
+      cb.textContent = '✓';
+      card.appendChild(cb);
+      if (isAdmin || sp === userName) {
+        cb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          confirmAndClear(room.num, work);
+        });
+      }
+    } else {
+      // Assigned, not done
+      const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
+      card.style.background = color;
+      if (sp === userName || isAdmin) {
+        const cb = document.createElement('div');
+        cb.className = 'checkbox';
+        card.appendChild(cb);
+        cb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setMark(room.num, work);
+        });
+      } else {
+        card.classList.add('dimmed');
+      }
+    }
+  }
+
+  card.addEventListener('click', () => openPopup(room));
+  return card;
+}
+
+function matchesFilters(room) {
+  const f = state.filters;
+  if (f.zahvatka.size && !f.zahvatka.has(room.zahvatka)) return false;
+  if (f.korp.size && !f.korp.has(room.korp)) return false;
+  if (f.floor.size && !f.floor.has(room.floor)) return false;
+  if (f.tip.size && !f.tip.has(room.tip_panel)) return false;
+  if (f.searchNum && !room.num.toLowerCase().includes(f.searchNum.toLowerCase())) return false;
+  if (f.searchName && !room.name.toLowerCase().includes(f.searchName.toLowerCase()) && !room.ks.toLowerCase().includes(f.searchName.toLowerCase())) return false;
+
+  const assignments = state.data.assignments[room.num] || {};
+  const userName = state.data.user.name;
+  const isAdmin = state.data.user.isAdmin;
+
+  if (f.work) {
+    const a = assignments[f.work];
+    const sp = a ? a.sp : '';
+    const date = a ? a.date : '';
+    if (f.hideDone && date) return false;
+    if (f.hideOthers) {
+      if (!sp) return false;
+      if (!isAdmin && sp !== userName) return false;
+    }
+  } else {
+    if (f.hideOthers) {
+      const anyMine = Object.values(assignments).some(x => isAdmin ? !!x.sp : x.sp === userName);
+      if (!anyMine) return false;
+    }
+  }
+  return true;
+}
+
+function updateProgress() {
+  const u = state.data.user;
+  const isAdmin = u.isAdmin;
+  const userName = u.name;
+  const work = state.filters.work;
+  let total = 0, done = 0;
+
+  for (const num in state.data.assignments) {
+    const wks = state.data.assignments[num];
+    if (work) {
+      const a = wks[work];
+      if (!a || !a.sp) continue;
+      if (!isAdmin && a.sp !== userName) continue;
+      total++;
+      if (a.date) done++;
+    } else {
+      for (const wid in wks) {
+        const a = wks[wid];
+        if (!a.sp) continue;
+        if (!isAdmin && a.sp !== userName) continue;
+        total++;
+        if (a.date) done++;
+      }
+    }
+  }
+
+  const work_label = work ? (state.data.works.find(w => w.id_raboty === work) || {}).full_name : null;
+  const label = work_label
+    ? `Сделано ${done} из ${total} по работе «${work_label}»`
+    : `Сделано ${done} из ${total} по ${isAdmin ? 'всем работам' : 'моим работам'}`;
+  document.getElementById('progressEl').textContent = label;
+
+  // toggle "hide done" availability
+  const tg = document.getElementById('toggleDoneLabel');
+  if (work) tg.classList.remove('disabled');
+  else {
+    tg.classList.add('disabled');
+    state.filters.hideDone = false;
+    document.getElementById('toggleHideDone').checked = false;
+  }
+}
+
+// ============================================================================
+// Actions
+// ============================================================================
+async function setMark(num, idRaboty) {
+  const result = await postAction('setDate', { num, id_raboty: idRaboty });
+  if (!result.ok) {
+    toast('Не удалось: ' + (result.error || 'ошибка'), true);
+    return;
+  }
+  // Update local state
+  if (!state.data.assignments[num]) state.data.assignments[num] = {};
+  if (!state.data.assignments[num][idRaboty]) state.data.assignments[num][idRaboty] = { sp: '', date: '' };
+  state.data.assignments[num][idRaboty].date = result.date;
+  saveCache();
+  renderMatrix();
+  updateProgress();
+  // If popup is open for this room — refresh it
+  refreshPopupIfOpen(num);
+}
+
+async function confirmAndClear(num, idRaboty) {
+  if (!confirm('Снять отметку готовности?')) return;
+  const result = await postAction('clearDate', { num, id_raboty: idRaboty });
+  if (!result.ok) {
+    toast('Не удалось: ' + (result.error || 'ошибка'), true);
+    return;
+  }
+  if (state.data.assignments[num] && state.data.assignments[num][idRaboty]) {
+    state.data.assignments[num][idRaboty].date = '';
+  }
+  saveCache();
+  renderMatrix();
+  updateProgress();
+  refreshPopupIfOpen(num);
+}
+
+async function postAction(action, payload) {
+  try {
+    const body = JSON.stringify(Object.assign({ action, token: state.token }, payload));
+    const resp = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body
+    });
+    return await resp.json();
+  } catch (err) {
+    return { ok: false, error: 'Сеть: ' + err.message };
+  }
+}
+
+function saveCache() {
+  localStorage.setItem(STORAGE_DATA_PREFIX + state.token, JSON.stringify(state.data));
+}
+
+// ============================================================================
+// Popup
+// ============================================================================
+let popupRoom = null;
+
+function openPopup(room) {
+  popupRoom = room;
+  renderPopup(room);
+  document.getElementById('popupOverlay').classList.add('show');
+}
+
+function closePopup() {
+  popupRoom = null;
+  document.getElementById('popupOverlay').classList.remove('show');
+}
+
+function refreshPopupIfOpen(num) {
+  if (popupRoom && popupRoom.num === num) {
+    renderPopup(popupRoom);
+  }
+}
+
+function renderPopup(room) {
+  const userName = state.data.user.name;
+  const isAdmin = state.data.user.isAdmin;
+  const assignments = state.data.assignments[room.num] || {};
+  const works = state.data.works;
+
+  // Only works that have assignments
+  const assignedWorks = works.filter(w => assignments[w.id_raboty] && assignments[w.id_raboty].sp);
+
+  const popupHtml = `
+    <div class="popup-header">
+      <div>
+        <div class="popup-title">${escapeHtml(room.num)}</div>
+        <div class="popup-subtitle">${escapeHtml(room.name)}</div>
+      </div>
+      <button class="popup-close" onclick="closePopupExt()">×</button>
+    </div>
+    <div class="popup-meta">
+      <div><span class="label">Корпус</span><br>${escapeHtml(room.korp)}</div>
+      <div><span class="label">Этаж</span><br>${escapeHtml(room.floor)}</div>
+      <div><span class="label">Площадь</span><br>${escapeHtml(room.area || '—')} м²</div>
+      <div><span class="label">Периметр</span><br>${escapeHtml(room.perim || '—')} м</div>
+      <div><span class="label">Захватка</span><br>${escapeHtml(room.zahvatka || '—')}</div>
+      <div><span class="label">Тип (КС)</span><br>${escapeHtml(room.ks || '—')}</div>
+    </div>
+    <div class="popup-works">
+      <h3>Работы</h3>
+      ${assignedWorks.length === 0 ? '<div style="color:#9CA3AF;padding:10px">Назначений нет</div>' : ''}
+      ${assignedWorks.map(w => {
+        const a = assignments[w.id_raboty];
+        const canEdit = isAdmin || a.sp === userName;
+        const done = !!a.date;
+        return `
+          <div class="popup-work-row ${done ? 'done' : ''} ${canEdit ? '' : 'read-only'}" data-wid="${w.id_raboty}">
+            <div class="work-checkbox">${done ? '✓' : ''}</div>
+            <div class="work-info">
+              <div class="work-name">${escapeHtml(w.full_name)}</div>
+              <div class="work-meta">${escapeHtml(a.sp)}${done ? ' • ' + formatDateRu(a.date) : ''}</div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  const popup = document.getElementById('popup');
+  popup.innerHTML = popupHtml;
+
+  // Bind clicks for editable rows
+  popup.querySelectorAll('.popup-work-row').forEach(rowEl => {
+    if (rowEl.classList.contains('read-only')) return;
+    rowEl.addEventListener('click', () => {
+      const wid = rowEl.dataset.wid;
+      const a = assignments[wid];
+      if (a.date) confirmAndClear(room.num, wid);
+      else setMark(room.num, wid);
+    });
+  });
+}
+
+// closePopup is called from inline HTML
+window.closePopupExt = closePopup;
+
+// ============================================================================
+// State screens
+// ============================================================================
+function hideAllStates() {
+  ['stateLoading', 'stateDenied', 'stateEmpty', 'stateError'].forEach(id => {
+    document.getElementById(id).classList.remove('show');
+  });
+}
+function showLoading() { hideAllStates(); document.getElementById('stateLoading').classList.add('show'); }
+function showDenied(msg) {
+  hideAllStates();
+  document.getElementById('headerEl').style.display = 'none';
+  document.getElementById('filtersEl').style.display = 'none';
+  document.getElementById('matrixWrap').style.display = 'none';
+  if (msg) document.getElementById('stateDeniedMsg').textContent = msg;
+  document.getElementById('stateDenied').classList.add('show');
+}
+function showError(msg) {
+  hideAllStates();
+  document.getElementById('stateErrorMsg').textContent = msg;
+  document.getElementById('stateError').classList.add('show');
+}
+
+// ============================================================================
+// UI bindings
+// ============================================================================
+function bindUI() {
+  document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+  document.getElementById('logoutBtn').addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_TOKEN);
+    localStorage.removeItem(STORAGE_DATA_PREFIX + state.token);
+    showDenied('Вы вышли. Откройте ссылку, выданную администратором.');
+  });
+  document.getElementById('emptyRefreshBtn').addEventListener('click', () => loadData(true));
+  document.getElementById('errorRetryBtn').addEventListener('click', () => loadData(true));
+
+  document.getElementById('filterWork').addEventListener('change', e => {
+    state.filters.work = e.target.value;
+    renderMatrix();
+    updateProgress();
+  });
+
+  document.getElementById('searchNum').addEventListener('input', e => {
+    state.filters.searchNum = e.target.value;
+    renderMatrix();
+  });
+  document.getElementById('searchName').addEventListener('input', e => {
+    state.filters.searchName = e.target.value;
+    renderMatrix();
+  });
+
+  document.getElementById('toggleHideDone').addEventListener('change', e => {
+    state.filters.hideDone = e.target.checked;
+    renderMatrix();
+  });
+  document.getElementById('toggleHideOthers').addEventListener('change', e => {
+    state.filters.hideOthers = e.target.checked;
+    renderMatrix();
+  });
+
+  document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+    state.filters.zahvatka.clear();
+    state.filters.korp.clear();
+    state.filters.floor.clear();
+    state.filters.tip.clear();
+    state.filters.work = '';
+    state.filters.searchNum = '';
+    state.filters.searchName = '';
+    state.filters.hideDone = false;
+    state.filters.hideOthers = false;
+    document.getElementById('filterWork').value = '';
+    document.getElementById('searchNum').value = '';
+    document.getElementById('searchName').value = '';
+    document.getElementById('toggleHideDone').checked = false;
+    document.getElementById('toggleHideOthers').checked = false;
+    renderFilters();
+    renderMatrix();
+    updateProgress();
+  });
+
+  document.getElementById('popupOverlay').addEventListener('click', e => {
+    if (e.target.id === 'popupOverlay') closePopup();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closePopup();
+  });
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+function uniqueSorted(arr) {
+  return Array.from(new Set(arr)).sort();
+}
+
+function sortKorps(arr) {
+  // Numbers first ascending, then letter-prefixed
+  return arr.slice().sort((a, b) => {
+    const na = Number(a), nb = Number(b);
+    const isNumA = !isNaN(na), isNumB = !isNaN(nb);
+    if (isNumA && isNumB) return na - nb;
+    if (isNumA) return -1;
+    if (isNumB) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function formatDateRu(iso) {
+  if (!iso) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+function toast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.toggle('error', !!isError);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+</script>
+
+</body>
+</html>

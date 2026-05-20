@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local secrets (URL GAS, токены для тестов, Spreadsheet ID)
+config.local.js
+.env
+*.local
+
+# Backups
+*.bak
+*.tmp
+*~
+
+# Logs
+*.log
