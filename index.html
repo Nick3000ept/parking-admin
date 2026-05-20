@@ -313,9 +313,6 @@ body.has-selection { padding-bottom: 100px; }
       <label class="toggle" id="toggleDoneLabel">
         <input type="checkbox" id="toggleHideDone"> Скрыть готовые
       </label>
-      <label class="toggle">
-        <input type="checkbox" id="toggleHideOthers"> Скрыть чужие
-      </label>
       <button class="clear-btn" id="clearFiltersBtn">× Очистить</button>
     </div>
   </div>
@@ -414,8 +411,7 @@ const state = {
     work: '',
     searchNum: '',
     searchName: '',
-    hideDone: false,
-    hideOthers: false
+    hideDone: false
   }
 };
 
@@ -874,19 +870,20 @@ function matchesFilters(room) {
   const isViewer = state.data.user.isViewer;
   const seesAll = isAdmin || isViewer;
 
+  // Для подрядчика: показываем только помещения где он назначен хотя бы на одну работу
+  if (!seesAll) {
+    const hasMine = Object.values(assignments).some(x => x.sp === userName);
+    if (!hasMine) return false;
+  }
+
   if (f.work) {
     const a = assignments[f.work];
-    const sp = a ? a.sp : '';
     const date = a ? a.date : '';
     if (f.hideDone && date) return false;
-    if (f.hideOthers) {
-      if (!sp) return false;
-      if (!seesAll && sp !== userName) return false;
-    }
-  } else {
-    if (f.hideOthers) {
-      const anyMine = Object.values(assignments).some(x => seesAll ? !!x.sp : x.sp === userName);
-      if (!anyMine) return false;
+    // Для подрядчика: если выбрана работа, на которую он не назначен в этом помещении —
+    // скрываем (иначе будут "пустые" карточки)
+    if (!seesAll) {
+      if (!a || a.sp !== userName) return false;
     }
   }
   return true;
@@ -1202,11 +1199,6 @@ function bindUI() {
     renderMatrix();
     updateProgress();
   });
-  document.getElementById('toggleHideOthers').addEventListener('change', e => {
-    state.filters.hideOthers = e.target.checked;
-    renderMatrix();
-    updateProgress();
-  });
 
   document.getElementById('clearFiltersBtn').addEventListener('click', () => {
     state.filters.zahvatka.clear();
@@ -1217,13 +1209,11 @@ function bindUI() {
     state.filters.searchNum = '';
     state.filters.searchName = '';
     state.filters.hideDone = false;
-    state.filters.hideOthers = false;
     state.selected.clear();
     document.getElementById('filterTip').value = '';
     document.getElementById('searchNum').value = '';
     document.getElementById('searchName').value = '';
     document.getElementById('toggleHideDone').checked = false;
-    document.getElementById('toggleHideOthers').checked = false;
     renderFilters();
     renderWorkTabs();
     renderMatrix();
