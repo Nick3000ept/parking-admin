@@ -28,6 +28,15 @@ body { min-width: 1024px; min-height: 100vh; }
 }
 .header .user-badge.admin { background: #DC2626; }
 .header .user-badge.viewer { background: #6B7280; }
+.header .selection-info {
+  background: #2563EB; color: #fff; padding: 4px 10px; border-radius: 4px;
+  display: flex; gap: 10px; align-items: center; font-size: 13px;
+}
+.header .selection-info button {
+  background: rgba(255,255,255,0.2); border: none; color: #fff;
+  padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;
+}
+.header .selection-info button:hover { background: rgba(255,255,255,0.35); }
 
 /* ===== FILTERS ===== */
 .filters {
@@ -64,7 +73,7 @@ body { min-width: 1024px; min-height: 100vh; }
 .filters .clear-btn:hover { background: #F9FAFB; }
 
 /* ===== MATRIX ===== */
-.matrix-wrap { display: flex; flex-direction: column; padding: 8px 20px 20px; min-height: calc(100vh - 290px); }
+.matrix-wrap { display: flex; flex-direction: column; padding: 8px 20px 20px; }
 
 /* ===== Work tabs (над матрицей, single-select) ===== */
 .work-tabs {
@@ -85,15 +94,17 @@ body { min-width: 1024px; min-height: 100vh; }
 .work-tab.active { background: #1F2937; color: #fff; border-color: #1F2937; font-weight: 600; }
 .work-tab.all-tab { font-weight: 600; }
 .matrix-col-headers {
-  display: grid; gap: 4px; margin-left: 44px; margin-bottom: 4px;
+  display: grid; gap: 4px; margin-bottom: 4px;
   font-size: 12px; font-weight: 600; color: #6B7280; text-align: center;
 }
+.matrix-col-headers .corner { /* пустая ячейка над колонкой этажей */ }
 .matrix {
-  flex: 1; display: grid; gap: 4px; padding-left: 40px; position: relative;
+  display: grid; gap: 4px;
+  grid-auto-rows: minmax(120px, max-content);
 }
 .matrix .row-label {
-  position: absolute; left: 0; width: 36px; display: flex; align-items: center;
-  justify-content: center; font-weight: 600; color: #6B7280; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 600; color: #6B7280; font-size: 14px;
   background: #fff; border-radius: 4px; border: 1px solid #E5E7EB;
 }
 .cell {
@@ -104,9 +115,9 @@ body { min-width: 1024px; min-height: 100vh; }
 
 /* ===== CARDS ===== */
 .card {
-  width: 80px; height: 40px; border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600; cursor: pointer; user-select: none;
+  width: 96px; height: 52px; border-radius: 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none; padding: 2px 4px;
   position: relative; background: #E5E7EB; color: #1F2937;
   border: 1px solid transparent;
   transition: transform 0.1s, box-shadow 0.1s;
@@ -116,6 +127,7 @@ body { min-width: 1024px; min-height: 100vh; }
 .card.dimmed:hover { transform: none; box-shadow: none; }
 .card.done { background: #34D399; color: #fff; }
 .card.done-other { background: #34D399; opacity: 0.5; color: #fff; }
+.card.selected { outline: 3px solid #2563EB; outline-offset: -2px; z-index: 2; }
 .card .checkbox {
   position: absolute; right: 3px; top: 3px;
   width: 12px; height: 12px; border: 1px solid rgba(0,0,0,0.4);
@@ -125,7 +137,12 @@ body { min-width: 1024px; min-height: 100vh; }
 .card.done .checkbox, .card.done-other .checkbox {
   background: #fff; border-color: #fff; color: #34D399;
 }
-.card .num { font-size: 11px; }
+.card .num { font-size: 11px; font-weight: 600; line-height: 1.1; }
+.card .tip {
+  font-size: 9px; font-weight: 400; line-height: 1.1; opacity: 0.75;
+  text-align: center; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* ===== POPUP ===== */
 .popup-overlay {
@@ -204,6 +221,10 @@ body { min-width: 1024px; min-height: 100vh; }
 <div class="header" id="headerEl" style="display:none">
   <h1>Паркинг СБ3</h1>
   <div class="progress" id="progressEl"></div>
+  <div class="selection-info" id="selectionInfo" style="display:none">
+    <span id="selectionText"></span>
+    <button id="clearSelectionBtn">× Снять</button>
+  </div>
   <div class="actions">
     <span class="user-badge" id="userBadge"></span>
     <button id="refreshBtn">Обновить</button>
@@ -212,25 +233,21 @@ body { min-width: 1024px; min-height: 100vh; }
 </div>
 
 <div class="filters" id="filtersEl" style="display:none">
-  <div class="label">Захв. / Корпус</div>
+  <div class="label">Захв./Корп./Этаж</div>
   <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
     <div class="chips" id="filterZahvatka"></div>
     <span style="color:#D1D5DB">│</span>
     <div class="chips" id="filterKorp"></div>
+    <span style="color:#D1D5DB">│</span>
+    <div class="chips" id="filterFloor"></div>
   </div>
 
-  <div class="label">Этаж</div>
-  <div class="chips" id="filterFloor"></div>
-
-  <div class="label">Тип помещения</div>
-  <div>
+  <div class="label">Тип / Поиск</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <select id="filterTip">
       <option value="">— Все типы помещений —</option>
     </select>
-  </div>
-
-  <div class="label">Поиск</div>
-  <div style="display:flex;gap:8px">
+    <span style="color:#D1D5DB">│</span>
     <input type="text" id="searchNum" placeholder="По номеру (7.-3.01)">
     <input type="text" id="searchName" placeholder="По назначению (Кладовая)">
   </div>
@@ -323,6 +340,7 @@ const STORAGE_DATA_PREFIX = 'parking_data_';
 const state = {
   token: null,
   data: null,
+  selected: new Set(), // num помещений выбранных через Ctrl+Click
   filters: {
     zahvatka: new Set(),
     korp: new Set(),
@@ -533,6 +551,33 @@ function renderWorkTabs() {
   });
 }
 
+function updateSelectionInfo() {
+  const info = document.getElementById('selectionInfo');
+  const txt = document.getElementById('selectionText');
+  if (state.selected.size === 0) {
+    info.style.display = 'none';
+    return;
+  }
+  // Суммарная площадь по выбранным помещениям
+  let totalArea = 0;
+  state.selected.forEach(num => {
+    const room = state.data.rooms.find(r => r.num === num);
+    if (!room) return;
+    // Площадь в формате "4,19" — парсим
+    const a = parseFloat(String(room.area).replace(',', '.').replace(/\s/g, ''));
+    if (!isNaN(a)) totalArea += a;
+  });
+  const areaStr = totalArea.toFixed(2).replace('.', ',');
+  txt.textContent = `Выбрано: ${state.selected.size} помещений · ${areaStr} м²`;
+  info.style.display = 'flex';
+}
+
+function clearSelection() {
+  state.selected.clear();
+  document.querySelectorAll('.card.selected').forEach(el => el.classList.remove('selected'));
+  updateSelectionInfo();
+}
+
 function selectWork(workId) {
   // Single-select: повторный клик по активному снимает (= "Все работы")
   if (state.filters.work === workId) {
@@ -585,26 +630,24 @@ function renderMatrix() {
     return;
   }
 
-  matrix.style.gridTemplateColumns = `repeat(${korps.length}, 1fr)`;
-  matrix.style.gridTemplateRows = `repeat(${floors.length}, 1fr)`;
-  headers.style.gridTemplateColumns = `repeat(${korps.length}, 1fr)`;
+  // Первая колонка — узкая для row-labels (этажей)
+  const colTpl = `40px repeat(${korps.length}, 1fr)`;
+  matrix.style.gridTemplateColumns = colTpl;
+  matrix.style.gridTemplateRows = '';  // авто через grid-auto-rows
+  headers.style.gridTemplateColumns = colTpl;
 
-  headers.innerHTML = korps.map(k => `<div>К${k}</div>`).join('');
+  // Шапка колонок: пустая угловая + корпуса
+  headers.innerHTML = '<div class="corner"></div>' + korps.map(k => `<div>К${k}</div>`).join('');
 
   matrix.innerHTML = '';
 
-  // Row labels (absolute positioned)
-  floors.forEach((f, fi) => {
+  // Грид: для каждой строки этажа — лейбл + N ячеек корпусов
+  for (let fi = 0; fi < floors.length; fi++) {
     const lbl = document.createElement('div');
     lbl.className = 'row-label';
-    lbl.style.top = `calc(${(fi / floors.length) * 100}% + 2px)`;
-    lbl.style.height = `calc(${100 / floors.length}% - 4px)`;
-    lbl.textContent = f;
+    lbl.textContent = floors[fi];
     matrix.appendChild(lbl);
-  });
 
-  // Build cells
-  for (let fi = 0; fi < floors.length; fi++) {
     for (let ki = 0; ki < korps.length; ki++) {
       const cell = document.createElement('div');
       cell.className = 'cell';
@@ -619,11 +662,21 @@ function buildCard(room) {
   const card = document.createElement('div');
   card.className = 'card';
   card.dataset.num = room.num;
+  if (state.selected.has(room.num)) card.classList.add('selected');
 
   const num = document.createElement('div');
   num.className = 'num';
   num.textContent = room.num;
   card.appendChild(num);
+
+  const tipText = room.tip_panel || room.name || '';
+  if (tipText) {
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.textContent = tipText;
+    tip.title = room.name;
+    card.appendChild(tip);
+  }
 
   const work = state.filters.work;
   const userName = state.data.user.name;
@@ -678,9 +731,18 @@ function buildCard(room) {
   }
 
   // Клик по карточке:
-  //   canToggle=true  → toggle отметки (без confirm)
-  //   canToggle=false → открыть попап (детальный режим)
-  card.addEventListener('click', () => {
+  //   Ctrl/Cmd+Click → multi-select toggle (не отмечает работу)
+  //   обычный клик:
+  //     canToggle=true  → toggle отметки (без confirm)
+  //     canToggle=false → открыть попап (детальный режим)
+  card.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      if (state.selected.has(room.num)) state.selected.delete(room.num);
+      else state.selected.add(room.num);
+      card.classList.toggle('selected');
+      updateSelectionInfo();
+      return;
+    }
     if (canToggle) {
       if (isDone) clearMark(room.num, work);
       else setMark(room.num, work);
@@ -936,6 +998,7 @@ function showError(msg) {
 // ============================================================================
 function bindUI() {
   document.getElementById('refreshBtn').addEventListener('click', () => loadData(true));
+  document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
   document.getElementById('logoutBtn').addEventListener('click', () => {
     localStorage.removeItem(STORAGE_TOKEN);
     localStorage.removeItem(STORAGE_DATA_PREFIX + state.token);
@@ -977,6 +1040,7 @@ function bindUI() {
     state.filters.searchName = '';
     state.filters.hideDone = false;
     state.filters.hideOthers = false;
+    state.selected.clear();
     document.getElementById('filterTip').value = '';
     document.getElementById('searchNum').value = '';
     document.getElementById('searchName').value = '';
@@ -986,13 +1050,17 @@ function bindUI() {
     renderWorkTabs();
     renderMatrix();
     updateProgress();
+    updateSelectionInfo();
   });
 
   document.getElementById('popupOverlay').addEventListener('click', e => {
     if (e.target.id === 'popupOverlay') closePopup();
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closePopup();
+    if (e.key === 'Escape') {
+      closePopup();
+      if (state.selected.size > 0) clearSelection();
+    }
   });
 }
 

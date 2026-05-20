@@ -106,9 +106,9 @@ function authenticate(token) {
     const rowToken = String(data[i][3] || '');
     const rowStatus = String(data[i][2] || '');
     if (rowToken === String(token) && rowStatus === 'Активен') {
-      const id = String(data[i][1] || '');
+      const id = String(data[i][1] || '').trim();
       return {
-        name: String(data[i][0] || ''),
+        name: String(data[i][0] || '').trim(),
         id: id,
         isAdmin: id === CONFIG.ADMIN_ID,
         isViewer: id === CONFIG.VIEWER_ID
@@ -134,10 +134,10 @@ function loadSnapshot(user) {
   for (var i = 1; i < rabotyData.length; i++) {
     if (!rabotyData[i][0]) continue;
     works.push({
-      full_name: String(rabotyData[i][0]),
-      surface: String(rabotyData[i][1] || ''),
-      short_name: String(rabotyData[i][2] || rabotyData[i][0]),
-      id_raboty: String(rabotyData[i][3] || ''),
+      full_name: String(rabotyData[i][0] || '').trim(),
+      surface: String(rabotyData[i][1] || '').trim(),
+      short_name: String(rabotyData[i][2] || rabotyData[i][0] || '').trim(),
+      id_raboty: String(rabotyData[i][3] || '').trim(),
       order: i
     });
   }
