@@ -872,6 +872,19 @@ function updateProgress() {
 // ============================================================================
 // Actions
 // ============================================================================
+// Sequence-номер каждой пары (num, idRaboty) — для игнора устаревших ответов.
+// Каждый клик увеличивает номер. Когда ответ от сервера приходит, проверяем
+// что номер не сменился — иначе значит был более свежий клик, ответ игнорируем.
+const cellSeq = {};
+function nextSeq(num, idRaboty) {
+  const k = num + '|' + idRaboty;
+  cellSeq[k] = (cellSeq[k] || 0) + 1;
+  return cellSeq[k];
+}
+function isStale(num, idRaboty, mySeq) {
+  return cellSeq[num + '|' + idRaboty] !== mySeq;
+}
+
 function todayLocal() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -885,6 +898,7 @@ function buildHint(num, idRaboty) {
 }
 
 async function setMark(num, idRaboty) {
+  const mySeq = nextSeq(num, idRaboty);
   // Optimistic update: меняем state и перерисовываем только эту карточку
   if (!state.data.assignments[num]) state.data.assignments[num] = {};
   if (!state.data.assignments[num][idRaboty]) state.data.assignments[num][idRaboty] = { sp: '', date: '' };
@@ -895,8 +909,10 @@ async function setMark(num, idRaboty) {
   refreshPopupIfOpen(num);
 
   const result = await postAction('setDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
+  // Если за это время на эту же ячейку был более свежий клик — игнорируем ответ
+  if (isStale(num, idRaboty, mySeq)) return;
+
   if (!result.ok) {
-    // Rollback
     state.data.assignments[num][idRaboty] = prev;
     refreshCard(num);
     updateProgress();
@@ -904,7 +920,6 @@ async function setMark(num, idRaboty) {
     toast('Не удалось: ' + (result.error || 'ошибка'), true);
     return;
   }
-  // Применяем серверную дату (она может отличаться от локальной если разница часовых поясов)
   state.data.assignments[num][idRaboty].date = result.date;
   refreshCard(num);
   saveCache();
@@ -912,6 +927,7 @@ async function setMark(num, idRaboty) {
 
 async function clearMark(num, idRaboty) {
   if (!state.data.assignments[num] || !state.data.assignments[num][idRaboty]) return;
+  const mySeq = nextSeq(num, idRaboty);
   const prev = Object.assign({}, state.data.assignments[num][idRaboty]);
   state.data.assignments[num][idRaboty].date = '';
   refreshCard(num);
@@ -919,6 +935,8 @@ async function clearMark(num, idRaboty) {
   refreshPopupIfOpen(num);
 
   const result = await postAction('clearDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
+  if (isStale(num, idRaboty, mySeq)) return;
+
   if (!result.ok) {
     state.data.assignments[num][idRaboty] = prev;
     refreshCard(num);
