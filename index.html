@@ -332,6 +332,15 @@ body.has-selection { padding-bottom: 100px; }
   </div>
 
   <div class="filters-row">
+    <div class="filter-group" id="filterContractorGroup" style="display:none">
+      <div class="group-label">Подрядчик</div>
+      <div class="group-content">
+        <select id="filterContractor">
+          <option value="">— Все подрядчики —</option>
+        </select>
+      </div>
+    </div>
+    <span class="filters-divider" id="filterContractorDivider" style="display:none">│</span>
     <div class="filter-group">
       <div class="group-label">Поиск по номеру и названию</div>
       <div class="group-content">
@@ -438,6 +447,7 @@ const state = {
     floor: new Set(),
     tip: '',
     work: '',
+    contractor: '',
     searchNum: '',
     searchName: '',
     hideDone: false
@@ -461,11 +471,17 @@ async function boot() {
 
 function extractToken() {
   const url = new URL(window.location.href);
-  const fromUrl = url.searchParams.get('t');
+  let fromUrl = url.searchParams.get('t');
+  // Fallback: если в URL не t=<token>, а опечатка ?=token или другой ключ —
+  // ищем в query string любую последовательность из 16 hex (формат наших токенов).
+  if (!fromUrl) {
+    const m = window.location.search.match(/\b[a-f0-9]{16}\b/i);
+    if (m) fromUrl = m[0].toLowerCase();
+  }
   if (fromUrl) {
     localStorage.setItem(STORAGE_TOKEN, fromUrl);
-    url.searchParams.delete('t');
-    window.history.replaceState({}, '', url.toString());
+    // Очищаем URL от query — независимо от того, был это t= или просто значение
+    window.history.replaceState({}, '', url.origin + url.pathname);
     return fromUrl;
   }
   return localStorage.getItem(STORAGE_TOKEN);
@@ -580,6 +596,37 @@ function renderFilters() {
     if (t === currentTip) o.selected = true;
     tipSel.appendChild(o);
   });
+
+  // Фильтр по подрядчику — только для admin/viewer
+  const u = state.data.user;
+  const seesAll = u.isAdmin || u.isViewer;
+  const contractorGroup = document.getElementById('filterContractorGroup');
+  const contractorDivider = document.getElementById('filterContractorDivider');
+  if (seesAll) {
+    contractorGroup.style.display = '';
+    contractorDivider.style.display = '';
+    const contractorSel = document.getElementById('filterContractor');
+    const currentContractor = state.filters.contractor;
+    // Уникальные подрядчики из всех назначений
+    const contractorsSet = new Set();
+    for (const num in state.data.assignments) {
+      for (const wid in state.data.assignments[num]) {
+        const sp = state.data.assignments[num][wid].sp;
+        if (sp) contractorsSet.add(sp);
+      }
+    }
+    contractorSel.innerHTML = '<option value="">— Все подрядчики —</option>';
+    Array.from(contractorsSet).sort().forEach(c => {
+      const o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      if (c === currentContractor) o.selected = true;
+      contractorSel.appendChild(o);
+    });
+  } else {
+    contractorGroup.style.display = 'none';
+    contractorDivider.style.display = 'none';
+  }
 
 }
 
@@ -904,6 +951,17 @@ function matchesFilters(room) {
     if (!hasMine) return false;
   }
 
+  // Для admin/viewer: если выбран подрядчик в фильтре — отображаем только помещения с его назначениями
+  if (seesAll && f.contractor) {
+    if (f.work) {
+      const a = assignments[f.work];
+      if (!a || a.sp !== f.contractor) return false;
+    } else {
+      const hasContractor = Object.values(assignments).some(x => x.sp === f.contractor);
+      if (!hasContractor) return false;
+    }
+  }
+
   if (f.work) {
     const a = assignments[f.work];
     const date = a ? a.date : '';
@@ -924,6 +982,8 @@ function updateProgress() {
   const seesAll = isAdmin || isViewer;
   const userName = u.name;
   const work = state.filters.work;
+  // Имя подрядчика для подсчёта: для подрядчика — он сам, для admin/viewer — фильтр (или null = все)
+  const focusName = seesAll ? (state.filters.contractor || null) : userName;
 
   // Считаем по отфильтрованным помещениям
   const visibleRooms = state.data.rooms.filter(matchesFilters);
@@ -939,9 +999,9 @@ function updateProgress() {
     let isDone = false;
     if (work) {
       const a = wks[work];
-      if (a && a.sp && a.date && (seesAll || a.sp === userName)) isDone = true;
+      if (a && a.sp && a.date && (focusName ? a.sp === focusName : true)) isDone = true;
     } else {
-      const list = Object.values(wks).filter(x => seesAll ? !!x.sp : x.sp === userName);
+      const list = Object.values(wks).filter(x => focusName ? x.sp === focusName : !!x.sp);
       if (list.length > 0 && list.every(x => x.date)) isDone = true;
     }
     if (isDone) { done++; doneArea += area; }
@@ -1233,6 +1293,12 @@ function bindUI() {
     updateProgress();
   });
 
+  document.getElementById('filterContractor').addEventListener('change', e => {
+    state.filters.contractor = e.target.value;
+    renderMatrix();
+    updateProgress();
+  });
+
   document.getElementById('searchNum').addEventListener('input', e => {
     state.filters.searchNum = e.target.value;
     renderMatrix();
@@ -1256,11 +1322,14 @@ function bindUI() {
     state.filters.floor.clear();
     state.filters.tip = '';
     state.filters.work = '';
+    state.filters.contractor = '';
     state.filters.searchNum = '';
     state.filters.searchName = '';
     state.filters.hideDone = false;
     state.selected.clear();
     document.getElementById('filterTip').value = '';
+    const contractorSel = document.getElementById('filterContractor');
+    if (contractorSel) contractorSel.value = '';
     document.getElementById('searchNum').value = '';
     document.getElementById('searchName').value = '';
     document.getElementById('toggleHideDone').checked = false;
