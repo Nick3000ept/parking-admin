@@ -129,6 +129,13 @@ body.has-selection { padding-bottom: 100px; }
 }
 .filters .chip:hover { background: rgba(255,255,255,0.18); }
 .filters .chip.active { background: #fff; color: #1F2937; border-color: #fff; }
+.filters button.clear-filters-btn {
+  margin-left: auto; flex-shrink: 0;
+  background: rgba(255,255,255,0.08); color: #F3F4F6;
+  border: 1px solid rgba(255,255,255,0.22);
+  padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.filters button.clear-filters-btn:hover { background: rgba(255,255,255,0.2); }
 .filters input[type="text"] {
   padding: 3px 8px; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;
   font-size: 12px; width: 140px;
@@ -368,7 +375,6 @@ body.has-selection { padding-bottom: 100px; }
   <span class="user-badge" id="userBadge"></span>
   <div class="progress" id="progressEl"></div>
   <div class="actions">
-    <button id="clearFiltersBtn" title="Сбросить все фильтры">× Очистить фильтры</button>
     <button id="saveMarksBtn" class="save-marks-btn" style="display:none" title="Отправить накопленные отметки в Google Sheets">Сохранить 0</button>
     <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
   </div>
@@ -418,6 +424,7 @@ body.has-selection { padding-bottom: 100px; }
         <input type="text" id="searchName" placeholder="Кладовая">
       </div>
     </div>
+    <button id="clearFiltersBtn" class="clear-filters-btn" title="Сбросить все фильтры">× Очистить фильтры</button>
   </div>
 </div>
 
