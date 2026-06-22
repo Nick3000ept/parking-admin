@@ -13,6 +13,7 @@ const CONFIG = {
   SHEET_RABOTY: 'Ведомость_работ',
   SHEET_PODRYADCHIKI: 'Ведомость_подрядчиков',
   SHEET_TIPY: 'Типы_помещений',
+  SHEET_LOG: 'Лог_входов',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -58,6 +59,7 @@ function doGet(e) {
     }
 
     if (action === 'load') {
+      logLogin_(user, params.ua || '');
       return jsonResponse(loadSnapshot(user));
     }
 
@@ -770,6 +772,36 @@ function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Записывает строку в лист «Лог_входов». Если листа нет — создаёт с заголовками.
+ * Безопасно: любая ошибка проглатывается, чтобы не сломать вход пользователя.
+ */
+function logLogin_(user, userAgent) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEET_LOG);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEET_LOG);
+      sheet.appendRow(['Дата', 'Время', 'Подрядчик', 'ИД_подрядчик', 'Роль', 'User-Agent']);
+      sheet.setFrozenRows(1);
+      sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd');
+      sheet.getRange('B:B').setNumberFormat('HH:mm:ss');
+    }
+    const now = new Date();
+    const role = user.isAdmin ? 'Админ' : (user.isViewer ? 'Наблюдатель' : 'Подрядчик');
+    sheet.appendRow([
+      Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd'),
+      Utilities.formatDate(now, CONFIG.TIMEZONE, 'HH:mm:ss'),
+      user.name || '',
+      user.id || '',
+      role,
+      String(userAgent || '').slice(0, 200)
+    ]);
+  } catch (e) {
+    // молчим — лог не должен мешать работе
+  }
 }
 
 function assertWritableColumn(col) {

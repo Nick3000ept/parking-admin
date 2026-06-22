@@ -615,7 +615,8 @@ async function loadData(forceFresh) {
 
   // Fetch fresh
   try {
-    const url = GAS_URL + '?action=load&token=' + encodeURIComponent(state.token);
+    const ua = String(navigator.userAgent || '').slice(0, 200);
+    const url = GAS_URL + '?action=load&token=' + encodeURIComponent(state.token) + '&ua=' + encodeURIComponent(ua);
     const resp = await fetch(url, { method: 'GET' });
     const data = await resp.json();
 
