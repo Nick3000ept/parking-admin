@@ -83,6 +83,9 @@ function doPost(e) {
     if (body.action === 'clearDate') {
       return jsonResponse(clearDate(user, body.num, body.id_raboty, body.hint));
     }
+    if (body.action === 'setMarks') {
+      return jsonResponse(setMarks(user, body.marks));
+    }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
   } catch (err) {
@@ -347,6 +350,80 @@ function clearDate(user, num, idRaboty, hint) {
 }
 
 /**
+ * Батчевая запись/очистка отметок. Один HTTP, один Lock, один открытый sheet.
+ * Снимает конкуренцию за LockService при множественных кликах в режиме отметки.
+ *
+ * marks: [{ action: 'set'|'clear', num, id_raboty, hint: {row, colDate, colSp} }]
+ * Возвращает: { ok: true, results: [{ ok, num, id_raboty, date?, error?, note? }] }
+ */
+function setMarks(user, marks) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  if (!Array.isArray(marks) || marks.length === 0) {
+    return { ok: false, error: 'Пустой батч' };
+  }
+
+  const results = new Array(marks.length);
+  withLock_(function () {
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+    if (!sheet) {
+      for (var k = 0; k < marks.length; k++) {
+        results[k] = { ok: false, num: marks[k].num, id_raboty: marks[k].id_raboty, error: 'Лист "' + CONFIG.SHEET_GLAVNY + '" не найден' };
+      }
+      return;
+    }
+    const today = new Date();
+    const todayStr = Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+
+    for (var i = 0; i < marks.length; i++) {
+      const m = marks[i] || {};
+      const num = m.num;
+      const idRaboty = m.id_raboty;
+      const action = m.action;
+      try {
+        const cell = resolveCellInSheet_(sheet, num, idRaboty, m.hint);
+        if (cell.error) { results[i] = { ok: false, num: num, id_raboty: idRaboty, error: cell.error }; continue; }
+
+        if (!user.isAdmin) {
+          if (cell.spValue !== user.name) {
+            results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Эта работа не назначена вам' };
+            continue;
+          }
+        } else {
+          if (action === 'set' && !cell.spValue) {
+            results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Работа не назначена никому, нечего отмечать' };
+            continue;
+          }
+        }
+
+        assertWritableColumn(cell.colDate);
+
+        if (action === 'set') {
+          if (cell.currentDate) {
+            results[i] = { ok: true, num: num, id_raboty: idRaboty, date: cell.currentDate, note: 'already_set' };
+            continue;
+          }
+          sheet.getRange(cell.row, cell.colDate).setValue(today);
+          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: todayStr };
+        } else if (action === 'clear') {
+          if (!cell.currentDate) {
+            results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'already_empty' };
+            continue;
+          }
+          sheet.getRange(cell.row, cell.colDate).clearContent();
+          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '' };
+        } else {
+          results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Unknown action: ' + action };
+        }
+      } catch (err) {
+        results[i] = { ok: false, num: num, id_raboty: idRaboty, error: String(err && err.message ? err.message : err) };
+      }
+    }
+  });
+
+  return { ok: true, results: results };
+}
+
+/**
  * Берёт script lock только на короткое время выполнения write-операции.
  * Защищает от одновременной записи в одну и ту же ячейку.
  */
@@ -367,12 +444,15 @@ function withLock_(fn) {
  * Номер; если нет — fallback на полный locateCell (Sheets могли поменять).
  */
 function resolveCell_(num, idRaboty, hint) {
+  const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+  if (!sheet) return { error: 'Лист "' + CONFIG.SHEET_GLAVNY + '" не найден' };
+  return resolveCellInSheet_(sheet, num, idRaboty, hint);
+}
+
+/** То же что resolveCell_, но работает с уже открытым sheet — для батча. */
+function resolveCellInSheet_(sheet, num, idRaboty, hint) {
   if (hint && hint.row && hint.colDate && hint.colSp &&
       hint.colDate > CONFIG.REGISTRY_LAST_COL && hint.colSp > CONFIG.REGISTRY_LAST_COL) {
-    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
-    if (!sheet) return { error: 'Лист "' + CONFIG.SHEET_GLAVNY + '" не найден' };
-
-    // Один батч-чтение: A (Номер) + два значения дата/СП
     const fromCol = Math.min(CONFIG.COL_NUM, hint.colDate, hint.colSp);
     const toCol = Math.max(CONFIG.COL_NUM, hint.colDate, hint.colSp);
     const values = sheet.getRange(hint.row, fromCol, 1, toCol - fromCol + 1).getValues()[0];

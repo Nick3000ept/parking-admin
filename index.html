@@ -50,6 +50,21 @@ body.mark-mode-active .header { background: #047857; transition: background 0.2s
   border-color: #A7F3D0;
   box-shadow: inset 0 3px 6px rgba(0,0,0,0.3), 0 0 0 3px rgba(16,185,129,0.35);
 }
+.header button.save-marks-btn {
+  background: #2563EB; color: #fff;
+  border: 2px solid #93C5FD;
+  font-weight: 700;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.35);
+}
+.header button.save-marks-btn:hover { background: #1D4ED8; }
+.header button.save-marks-btn:disabled {
+  background: #6B7280; border-color: transparent;
+  box-shadow: none; cursor: default; opacity: 0.85;
+}
+.header button.save-marks-btn.success {
+  background: #047857; border-color: #6EE7B7;
+  box-shadow: 0 0 0 3px rgba(4,120,87,0.35);
+}
 .header .user-badge {
   background: #6366F1; padding: 6px 10px; border-radius: 4px; font-size: 13px;
 }
@@ -204,6 +219,12 @@ body.has-selection { padding-bottom: 100px; }
   box-shadow: 0 0 0 3px rgba(37,99,235,0.25);
   z-index: 2;
 }
+.card.pending { box-shadow: inset 0 0 0 2px #F59E0B; }
+.card.pending::before {
+  content: '●'; position: absolute; left: 4px; top: 2px;
+  font-size: 10px; color: #F59E0B; line-height: 1;
+  text-shadow: 0 0 2px rgba(0,0,0,0.3);
+}
 .card.done::after {
   content: '✓'; position: absolute; right: 4px; top: 2px;
   font-size: 14px; font-weight: 700; color: #fff;
@@ -231,6 +252,54 @@ body.has-selection { padding-bottom: 100px; }
   min-width: 480px; max-width: 600px; max-height: 80vh; overflow-y: auto;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2);
 }
+
+/* ===== CHANGELOG MODAL ===== */
+.changelog-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: none; align-items: center; justify-content: center; z-index: 200;
+}
+.changelog-overlay.show { display: flex; }
+.changelog-modal {
+  background: #fff; border-radius: 10px; padding: 28px 32px;
+  min-width: 520px; max-width: 680px; max-height: 86vh; overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+  font-size: 14px; line-height: 1.5;
+}
+.changelog-modal h2 {
+  margin: 0 0 6px; font-size: 22px; color: #1F2937;
+}
+.changelog-modal .changelog-date {
+  color: #6B7280; font-size: 12px; margin-bottom: 18px;
+}
+.changelog-modal .changelog-section {
+  margin-bottom: 18px; padding: 14px 16px;
+  background: #F9FAFB; border-left: 3px solid #2563EB; border-radius: 4px;
+}
+.changelog-modal .changelog-section.warn { border-left-color: #F59E0B; background: #FFFBEB; }
+.changelog-modal .changelog-section h3 {
+  margin: 0 0 6px; font-size: 15px; color: #111827;
+}
+.changelog-modal .changelog-section p { margin: 0 0 4px; color: #374151; }
+.changelog-modal .changelog-section ul { margin: 6px 0 0 18px; padding: 0; color: #374151; }
+.changelog-modal .changelog-section li { margin-bottom: 3px; }
+.changelog-modal .chip-demo {
+  display: inline-block; padding: 2px 10px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; vertical-align: middle;
+}
+.changelog-modal .chip-demo.save { background: #2563EB; color: #fff; }
+.changelog-modal .chip-demo.pending {
+  background: #fff; color: #1F2937;
+  box-shadow: inset 0 0 0 2px #F59E0B;
+}
+.changelog-modal .changelog-actions {
+  margin-top: 20px; text-align: right;
+}
+.changelog-modal .changelog-actions button {
+  background: #2563EB; color: #fff; border: none;
+  padding: 10px 22px; border-radius: 6px; font-size: 14px; font-weight: 600;
+  cursor: pointer;
+}
+.changelog-modal .changelog-actions button:hover { background: #1D4ED8; }
 .popup-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
 .popup-title { font-size: 18px; font-weight: 600; }
 .popup-subtitle { color: #6B7280; font-size: 13px; margin-top: 2px; }
@@ -300,6 +369,7 @@ body.has-selection { padding-bottom: 100px; }
   <div class="progress" id="progressEl"></div>
   <div class="actions">
     <button id="clearFiltersBtn" title="Сбросить все фильтры">× Очистить фильтры</button>
+    <button id="saveMarksBtn" class="save-marks-btn" style="display:none" title="Отправить накопленные отметки в Google Sheets">Сохранить 0</button>
     <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
   </div>
 </div>
@@ -368,6 +438,35 @@ body.has-selection { padding-bottom: 100px; }
   <div class="popup" id="popup"></div>
 </div>
 
+<!-- ===== Changelog modal ===== -->
+<div class="changelog-overlay" id="changelogOverlay">
+  <div class="changelog-modal">
+    <h2>Что нового</h2>
+    <div class="changelog-date">Обновление от 22 июня 2026</div>
+
+    <div class="changelog-section warn">
+      <h3>Появилась кнопка <span class="chip-demo save">Сохранить N</span></h3>
+      <p>Раньше отметки уходили в Google Таблицу сразу при клике. Из-за этого при быстрой отметке многих помещений часть галочек терялась.</p>
+      <p><b>Теперь:</b> отмечайте сколько нужно, затем нажмите <b>«Сохранить»</b> в правом верхнем углу. Все отметки уйдут одним пакетом — ничего не потеряется.</p>
+    </div>
+
+    <div class="changelog-section warn">
+      <h3><span class="chip-demo pending">●&nbsp;101</span> Оранжевая рамка — отметка ещё не сохранена</h3>
+      <p>Если у карточки оранжевая рамка и точка — это значит, что галочку поставили, но в таблицу она ещё <b>не отправлена</b>.</p>
+      <p>Не закрывайте вкладку, пока не нажмёте «Сохранить» — иначе несохранённые отметки пропадут. Браузер предупредит при попытке закрыть страницу.</p>
+    </div>
+
+    <div class="changelog-section">
+      <h3>Площадь стен для работ по стенам</h3>
+      <p>Для работ <b>«Штукатурка стен»</b> и <b>«Покраска стен»</b> теперь во всех суммарах показывается площадь стен (а не пола, как раньше). Работает в трёх местах: попап помещения, сумматор мультивыбора снизу, прогресс в шапке.</p>
+    </div>
+
+    <div class="changelog-actions">
+      <button id="changelogCloseBtn">Понятно</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== State screens ===== -->
 <div class="state-screen" id="stateLoading">
   <div class="panel">
@@ -432,6 +531,16 @@ const COLOR_PRESET = {
 const DEFAULT_COLOR = '#E5E7EB';
 const STORAGE_TOKEN = 'parking_token';
 const STORAGE_DATA_PREFIX = 'parking_data_';
+const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
+const CHANGELOG_VERSION = '2026-06-22';
+
+// Работы, для которых релевантна площадь стен (а не пола)
+const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
+const parseArea = (v) => parseFloat(String(v || '').replace(',', '.').replace(/\s/g, '')) || 0;
+const isWallWork = (workId) => !!workId && WALL_WORK_IDS.has(workId);
+const roomAreaFor = (room, workId) => parseArea(isWallWork(workId) ? room.walls : room.area);
+const areaLabelFor = (workId) => isWallWork(workId) ? 'Площадь стен' : 'Площадь';
+const roomAreaDisplayFor = (room, workId) => isWallWork(workId) ? (room.walls || '—') : (room.area || '—');
 
 // ============================================================================
 // State
@@ -564,6 +673,19 @@ function renderApp() {
   renderWorkTabs();
   renderMatrix();
   updateProgress();
+  maybeShowChangelog();
+}
+
+function maybeShowChangelog() {
+  try {
+    if (localStorage.getItem(STORAGE_CHANGELOG_SEEN) === CHANGELOG_VERSION) return;
+  } catch (e) { /* localStorage недоступен — всё равно покажем */ }
+  document.getElementById('changelogOverlay').classList.add('show');
+}
+
+function closeChangelog() {
+  document.getElementById('changelogOverlay').classList.remove('show');
+  try { localStorage.setItem(STORAGE_CHANGELOG_SEEN, CHANGELOG_VERSION); } catch (e) {}
 }
 
 function renderHeader() {
@@ -717,16 +839,17 @@ function updateSelectionInfo() {
   }
   info.classList.add('show');
   document.body.classList.add('has-selection');
-  // Суммарная площадь
+  // Суммарная площадь — для работ по стенам используем площадь стен
+  const work = state.filters.work;
   let totalArea = 0;
   state.selected.forEach(num => {
     const room = state.data.rooms.find(r => r.num === num);
     if (!room) return;
-    const a = parseFloat(String(room.area).replace(',', '.').replace(/\s/g, ''));
-    if (!isNaN(a)) totalArea += a;
+    totalArea += roomAreaFor(room, work);
   });
   const areaStr = totalArea.toFixed(2).replace('.', ',');
-  txt.textContent = `Выбрано: ${state.selected.size} помещений · общая площадь ${areaStr} м²`;
+  const areaWord = isWallWork(work) ? 'площадь стен' : 'общая площадь';
+  txt.textContent = `Выбрано: ${state.selected.size} помещений · ${areaWord} ${areaStr} м²`;
 
   // Теги выбранных, отсортированные
   const sorted = sortRoomNums(Array.from(state.selected));
@@ -907,6 +1030,9 @@ function buildCard(room) {
   // В режиме отметки кликабельные карточки получают подсветку
   if (state.markMode && canToggle) card.classList.add('markable');
 
+  // Карточка с несохранёнными отметками — оранжевая рамка + точка
+  if (roomHasPending(room.num)) card.classList.add('pending');
+
   // Клик по карточке:
   //   Ctrl/Cmd+Click            → multi-select toggle
   //   markMode + canToggle      → ставит/снимает отметку
@@ -993,7 +1119,7 @@ function updateProgress() {
 
   visibleRooms.forEach(r => {
     const wks = state.data.assignments[r.num] || {};
-    const area = parseFloat(String(r.area || '').replace(',', '.').replace(/\s/g, '')) || 0;
+    const area = roomAreaFor(r, work);
     totalArea += area;
 
     let isDone = false;
@@ -1026,7 +1152,7 @@ function updateProgress() {
       ${workLabel ? `<span class="work-name">«${escapeHtml(workLabel)}»</span>` : ''}
     </div>
     <div class="metric">
-      <span class="label">Площадь</span>
+      <span class="label">${areaLabelFor(work)}</span>
       <span class="total">${fmtArea(totalArea)}</span>
       <span class="sep">·</span>
       <span class="done">${fmtArea(doneArea)}</span>
@@ -1074,55 +1200,185 @@ function buildHint(num, idRaboty) {
   return { row: room.row, colDate: cols.col_date, colSp: cols.col_sp };
 }
 
-async function setMark(num, idRaboty) {
+// Очередь несохранённых меток. Уходит на бэк ОДНИМ HTTP-запросом по клику на
+// кнопку «Сохранить N». Это снимает конкуренцию за LockService и упирание в
+// лимит одновременных выполнений GAS (≈30 на пользователя), и даёт пользователю
+// явный контроль: видно сколько накопилось, при ошибке кнопка остаётся.
+const markQueue = []; // [{action, num, idRaboty, mySeq, prev, hint}]
+const pendingByRoom = new Map(); // num -> Set(idRaboty) — для класса .pending на карточке
+let markFlushInFlight = false;
+
+function markPending(num, idRaboty) {
+  let s = pendingByRoom.get(num);
+  if (!s) { s = new Set(); pendingByRoom.set(num, s); }
+  s.add(idRaboty);
+}
+function unmarkPending(num, idRaboty) {
+  const s = pendingByRoom.get(num);
+  if (!s) return;
+  s.delete(idRaboty);
+  if (s.size === 0) pendingByRoom.delete(num);
+}
+function roomHasPending(num) { return pendingByRoom.has(num); }
+
+function enqueueMark(action, num, idRaboty, prev, mySeq) {
+  // Дедупликация: для одной пары (num, idRaboty) держим один элемент в очереди.
+  // Action и mySeq обновляем на последний клик. prev оставляем от ПЕРВОГО клика
+  // — это исходное серверное состояние до серии кликов, нужно для отката.
+  const existing = markQueue.find(m => m.num === num && m.idRaboty === idRaboty);
+  if (existing) {
+    existing.action = action;
+    existing.mySeq = mySeq;
+    existing.hint = buildHint(num, idRaboty);
+  } else {
+    markQueue.push({
+      action: action,
+      num: num,
+      idRaboty: idRaboty,
+      mySeq: mySeq,
+      prev: prev,
+      hint: buildHint(num, idRaboty)
+    });
+  }
+  markPending(num, idRaboty);
+  refreshCard(num);
+  updateSaveButton();
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById('saveMarksBtn');
+  if (!btn) return;
+  const n = markQueue.length;
+  if (markFlushInFlight) {
+    btn.style.display = '';
+    btn.disabled = true;
+    btn.classList.remove('success');
+    btn.textContent = 'Отправляем ' + (btn.dataset.inflight || n) + '...';
+    return;
+  }
+  if (n === 0) {
+    if (!btn.classList.contains('success')) btn.style.display = 'none';
+    btn.disabled = true;
+    return;
+  }
+  btn.style.display = '';
+  btn.disabled = false;
+  btn.classList.remove('success');
+  btn.textContent = 'Сохранить ' + n;
+}
+
+async function flushMarks() {
+  if (markFlushInFlight) return;
+  if (markQueue.length === 0) return;
+
+  const batch = markQueue.splice(0);
+  const payload = batch.map(m => ({
+    action: m.action,
+    num: m.num,
+    id_raboty: m.idRaboty,
+    hint: m.hint
+  }));
+
+  markFlushInFlight = true;
+  const btn = document.getElementById('saveMarksBtn');
+  if (btn) btn.dataset.inflight = String(batch.length);
+  updateSaveButton();
+
+  let result;
+  try {
+    result = await postAction('setMarks', { marks: payload });
+  } finally {
+    markFlushInFlight = false;
+    if (btn) delete btn.dataset.inflight;
+  }
+
+  if (!result.ok) {
+    // Сеть/общая ошибка — возвращаем элементы обратно в очередь, не откатываем
+    // optimistic UI: пусть пользователь повторит. Карточки остаются .pending.
+    // Дедупликация: если по той же ячейке уже есть новый клик в markQueue —
+    // он актуальнее, старую запись отбрасываем (isStale всё равно бы сработал).
+    for (let i = batch.length - 1; i >= 0; i--) {
+      const m = batch[i];
+      const dup = markQueue.find(x => x.num === m.num && x.idRaboty === m.idRaboty);
+      if (!dup) markQueue.unshift(m);
+    }
+    updateSaveButton();
+    toast('Не удалось отправить: ' + (result.error || 'ошибка') + '. Нажмите «Сохранить» ещё раз.', true);
+    return;
+  }
+
+  const results = result.results || [];
+  let okCount = 0, errCount = 0, lastErr = '';
+  for (let i = 0; i < batch.length; i++) {
+    const m = batch[i];
+    const r = results[i] || { ok: false, error: 'нет ответа' };
+    if (isStale(m.num, m.idRaboty, m.mySeq)) {
+      // На эту ячейку был более свежий клик, уже снова в очереди — игнорируем
+      // ответ. pending не снимаем: он держится новой записью из очереди.
+      continue;
+    }
+    unmarkPending(m.num, m.idRaboty);
+    if (!r.ok) {
+      state.data.assignments[m.num][m.idRaboty] = m.prev;
+      errCount++;
+      lastErr = r.error || '';
+    } else {
+      state.data.assignments[m.num][m.idRaboty].date = r.date || '';
+      okCount++;
+    }
+    refreshCard(m.num);
+    refreshPopupIfOpen(m.num);
+  }
+  updateProgress();
+  saveCache();
+
+  if (errCount > 0) {
+    toast(errCount === 1 ? 'Не сохранено 1 помещение: ' + lastErr : 'Не сохранено ' + errCount + ' помещений (последняя: ' + lastErr + ')', true);
+    updateSaveButton();
+  } else {
+    // Короткая зелёная индикация успеха на 1.5 сек
+    if (btn) {
+      btn.style.display = '';
+      btn.disabled = true;
+      btn.classList.add('success');
+      btn.textContent = '✓ Сохранено: ' + okCount;
+      setTimeout(() => {
+        btn.classList.remove('success');
+        updateSaveButton();
+      }, 1500);
+    }
+  }
+}
+
+// Предупреждаем при попытке закрыть страницу с несохранёнными отметками.
+// Браузер показывает свой confirm — текст контролируем не мы.
+window.addEventListener('beforeunload', (e) => {
+  if (markQueue.length > 0 || markFlushInFlight) {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  }
+});
+
+function setMark(num, idRaboty) {
   const mySeq = nextSeq(num, idRaboty);
-  // Optimistic update: меняем state и перерисовываем только эту карточку
   if (!state.data.assignments[num]) state.data.assignments[num] = {};
   if (!state.data.assignments[num][idRaboty]) state.data.assignments[num][idRaboty] = { sp: '', date: '' };
   const prev = Object.assign({}, state.data.assignments[num][idRaboty]);
   state.data.assignments[num][idRaboty].date = todayLocal();
-  refreshCard(num);
   updateProgress();
   refreshPopupIfOpen(num);
-
-  const result = await postAction('setDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
-  // Если за это время на эту же ячейку был более свежий клик — игнорируем ответ
-  if (isStale(num, idRaboty, mySeq)) return;
-
-  if (!result.ok) {
-    state.data.assignments[num][idRaboty] = prev;
-    refreshCard(num);
-    updateProgress();
-    refreshPopupIfOpen(num);
-    toast('Не удалось: ' + (result.error || 'ошибка'), true);
-    return;
-  }
-  state.data.assignments[num][idRaboty].date = result.date;
-  refreshCard(num);
-  saveCache();
+  enqueueMark('set', num, idRaboty, prev, mySeq);
 }
 
-async function clearMark(num, idRaboty) {
+function clearMark(num, idRaboty) {
   if (!state.data.assignments[num] || !state.data.assignments[num][idRaboty]) return;
   const mySeq = nextSeq(num, idRaboty);
   const prev = Object.assign({}, state.data.assignments[num][idRaboty]);
   state.data.assignments[num][idRaboty].date = '';
-  refreshCard(num);
   updateProgress();
   refreshPopupIfOpen(num);
-
-  const result = await postAction('clearDate', { num, id_raboty: idRaboty, hint: buildHint(num, idRaboty) });
-  if (isStale(num, idRaboty, mySeq)) return;
-
-  if (!result.ok) {
-    state.data.assignments[num][idRaboty] = prev;
-    refreshCard(num);
-    updateProgress();
-    refreshPopupIfOpen(num);
-    toast('Не удалось: ' + (result.error || 'ошибка'), true);
-    return;
-  }
-  saveCache();
+  enqueueMark('clear', num, idRaboty, prev, mySeq);
 }
 
 function refreshCard(num) {
@@ -1207,7 +1463,7 @@ function renderPopup(room) {
     <div class="popup-meta">
       <div><span class="label">Корпус</span><br>${escapeHtml(room.korp)}</div>
       <div><span class="label">Этаж</span><br>${escapeHtml(room.floor)}</div>
-      <div><span class="label">Площадь</span><br>${escapeHtml(room.area || '—')} м²</div>
+      <div><span class="label">${areaLabelFor(state.filters.work)}</span><br>${escapeHtml(roomAreaDisplayFor(room, state.filters.work))} м²</div>
       <div><span class="label">Периметр</span><br>${escapeHtml(room.perim || '—')} м</div>
       <div><span class="label">Захватка</span><br>${escapeHtml(room.zahvatka || '—')}</div>
       <div><span class="label">Тип (КС)</span><br>${escapeHtml(room.ks || '—')}</div>
@@ -1282,6 +1538,11 @@ function bindUI() {
     document.getElementById('markModeBtn').classList.toggle('active', state.markMode);
     document.body.classList.toggle('mark-mode-active', state.markMode);
     renderMatrix();
+  });
+  document.getElementById('saveMarksBtn').addEventListener('click', flushMarks);
+  document.getElementById('changelogCloseBtn').addEventListener('click', closeChangelog);
+  document.getElementById('changelogOverlay').addEventListener('click', e => {
+    if (e.target.id === 'changelogOverlay') closeChangelog();
   });
   document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
   document.getElementById('emptyRefreshBtn').addEventListener('click', () => loadData(true));
