@@ -449,7 +449,18 @@ body.has-selection { padding-bottom: 100px; }
 <div class="changelog-overlay" id="changelogOverlay">
   <div class="changelog-modal">
     <h2>Что нового</h2>
-    <div class="changelog-date">Обновление от 22 июня 2026</div>
+    <div class="changelog-date">Обновление от 23 июня 2026</div>
+
+    <div class="changelog-section">
+      <h3>Новая работа: Укладка линолеума</h3>
+      <p>Добавлена работа <b>«Укладка линолеума»</b> в группу «Полы». Она появится в чипсах работ при следующей загрузке данных (F5).</p>
+    </div>
+
+    <div class="changelog-section">
+      <h3>При выборе работы — только нужные помещения</h3>
+      <p>Раньше при выборе конкретной работы в матрице оставались все помещения — часть из них была затемнена (работа там не назначена).</p>
+      <p><b>Теперь:</b> при выборе работы видны только те помещения, где эта работа кому-то назначена. Цифры в шапке (помещений / площадь) считаются только по ним.</p>
+    </div>
 
     <div class="changelog-section warn">
       <h3>Появилась кнопка <span class="chip-demo save">Сохранить N</span></h3>
@@ -539,7 +550,7 @@ const DEFAULT_COLOR = '#E5E7EB';
 const STORAGE_TOKEN = 'parking_token';
 const STORAGE_DATA_PREFIX = 'parking_data_';
 const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
-const CHANGELOG_VERSION = '2026-06-22';
+const CHANGELOG_VERSION = '2026-06-23';
 
 // Работы, для которых релевантна площадь стен (а не пола)
 const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
@@ -1098,13 +1109,13 @@ function matchesFilters(room) {
 
   if (f.work) {
     const a = assignments[f.work];
+    const sp = a ? a.sp : '';
     const date = a ? a.date : '';
+    // Скрываем помещения без назначения по выбранной работе (для всех ролей)
+    if (!sp) return false;
     if (f.hideDone && date) return false;
-    // Для подрядчика: если выбрана работа, на которую он не назначен в этом помещении —
-    // скрываем (иначе будут "пустые" карточки)
-    if (!seesAll) {
-      if (!a || a.sp !== userName) return false;
-    }
+    // Для подрядчика: показываем только его назначения
+    if (!seesAll && sp !== userName) return false;
   }
   return true;
 }
