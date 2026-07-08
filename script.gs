@@ -355,7 +355,14 @@ function clearDate(user, num, idRaboty, hint) {
  * Батчевая запись/очистка отметок. Один HTTP, один Lock, один открытый sheet.
  * Снимает конкуренцию за LockService при множественных кликах в режиме отметки.
  *
- * marks: [{ action: 'set'|'clear', num, id_raboty, hint: {row, colDate, colSp} }]
+ * Масштабируется на сотни отметок: три bulk-чтения (Ведомость_работ, весь лист
+ * Главный) + вся валидация в памяти + две групповые записи через RangeList —
+ * вместо пары обращений к Sheets API на каждую отметку. Запись точечная по
+ * ячейкам (не целыми колонками), поэтому параллельные ручные правки в Sheets
+ * не затираются.
+ *
+ * marks: [{ action: 'set'|'clear', num, id_raboty, hint }] — hint игнорируется
+ * (оставлен в протоколе для совместимости с уже открытыми сессиями фронта).
  * Возвращает: { ok: true, results: [{ ok, num, id_raboty, date?, error?, note? }] }
  */
 function setMarks(user, marks) {
@@ -366,15 +373,66 @@ function setMarks(user, marks) {
 
   const results = new Array(marks.length);
   withLock_(function () {
-    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEET_GLAVNY);
     if (!sheet) {
       for (var k = 0; k < marks.length; k++) {
         results[k] = { ok: false, num: marks[k].num, id_raboty: marks[k].id_raboty, error: 'Лист "' + CONFIG.SHEET_GLAVNY + '" не найден' };
       }
       return;
     }
+
+    // ИД_работы -> Полное название (одно чтение Ведомость_работ)
+    const workNameById = {};
+    const rabotySheet = ss.getSheetByName(CONFIG.SHEET_RABOTY);
+    if (rabotySheet) {
+      const rabotyData = rabotySheet.getDataRange().getValues();
+      for (var w = 1; w < rabotyData.length; w++) {
+        const id = String(rabotyData[w][3] || '').trim();
+        if (id) workNameById[id] = String(rabotyData[w][0] || '').trim();
+      }
+    }
+
+    // Весь Главный одним чтением: заголовки, строки помещений, текущие значения
+    const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+    const headers = values[0];
+
+    // Колонки работы ищем лениво и кэшируем — в батче обычно 1-2 разные работы
+    const colsByWorkId = {};
+    function colsForWork_(idRaboty) {
+      const key = String(idRaboty).trim();
+      if (colsByWorkId[key]) return colsByWorkId[key];
+      const workName = workNameById[key];
+      var out;
+      if (!workName) {
+        out = { error: 'Работа не найдена: ' + idRaboty };
+      } else {
+        var colDate = null;
+        var colSp = null;
+        for (var j = 0; j < headers.length; j++) {
+          const h = String(headers[j] || '').trim();
+          if (h === workName) colDate = j + 1;
+          if (h === workName + ' СП') colSp = j + 1;
+        }
+        out = (colDate && colSp)
+          ? { colDate: colDate, colSp: colSp }
+          : { error: 'Колонки работы "' + workName + '" не найдены в листе Главный' };
+      }
+      colsByWorkId[key] = out;
+      return out;
+    }
+
+    // Номер помещения -> строка листа (первое совпадение, как в locateCell)
+    const rowByNum = {};
+    for (var r = 1; r < values.length; r++) {
+      const numVal = String(values[r][CONFIG.COL_NUM - 1] || '').trim();
+      if (numVal && !(numVal in rowByNum)) rowByNum[numVal] = r + 1;
+    }
+
     const today = new Date();
     const todayStr = Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+    const setCells = [];   // A1-адреса для групповой записи даты
+    const clearCells = []; // A1-адреса для групповой очистки
 
     for (var i = 0; i < marks.length; i++) {
       const m = marks[i] || {};
@@ -382,36 +440,52 @@ function setMarks(user, marks) {
       const idRaboty = m.id_raboty;
       const action = m.action;
       try {
-        const cell = resolveCellInSheet_(sheet, num, idRaboty, m.hint);
-        if (cell.error) { results[i] = { ok: false, num: num, id_raboty: idRaboty, error: cell.error }; continue; }
+        const cols = colsForWork_(idRaboty);
+        if (cols.error) { results[i] = { ok: false, num: num, id_raboty: idRaboty, error: cols.error }; continue; }
+
+        const row = rowByNum[String(num).trim()];
+        if (!row) { results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Помещение не найдено: ' + num }; continue; }
+
+        const rowVals = values[row - 1];
+        const spRaw = rowVals[cols.colSp - 1];
+        const spValue = spRaw ? String(spRaw).trim() : '';
+        const dateRaw = rowVals[cols.colDate - 1];
+        var currentDate = '';
+        if (dateRaw instanceof Date) {
+          currentDate = Utilities.formatDate(dateRaw, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+        } else if (dateRaw !== '' && dateRaw !== null && dateRaw !== undefined) {
+          currentDate = String(dateRaw);
+        }
 
         if (!user.isAdmin) {
-          if (cell.spValue !== user.name) {
+          if (spValue !== user.name) {
             results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Эта работа не назначена вам' };
             continue;
           }
         } else {
-          if (action === 'set' && !cell.spValue) {
+          if (action === 'set' && !spValue) {
             results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Работа не назначена никому, нечего отмечать' };
             continue;
           }
         }
 
-        assertWritableColumn(cell.colDate);
+        assertWritableColumn(cols.colDate);
 
         if (action === 'set') {
-          if (cell.currentDate) {
-            results[i] = { ok: true, num: num, id_raboty: idRaboty, date: cell.currentDate, note: 'already_set' };
+          if (currentDate) {
+            results[i] = { ok: true, num: num, id_raboty: idRaboty, date: currentDate, note: 'already_set' };
             continue;
           }
-          sheet.getRange(cell.row, cell.colDate).setValue(today);
+          setCells.push(a1_(row, cols.colDate));
+          rowVals[cols.colDate - 1] = today; // чтобы повтор той же ячейки в батче увидел дату
           results[i] = { ok: true, num: num, id_raboty: idRaboty, date: todayStr };
         } else if (action === 'clear') {
-          if (!cell.currentDate) {
+          if (!currentDate) {
             results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'already_empty' };
             continue;
           }
-          sheet.getRange(cell.row, cell.colDate).clearContent();
+          clearCells.push(a1_(row, cols.colDate));
+          rowVals[cols.colDate - 1] = '';
           results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '' };
         } else {
           results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Unknown action: ' + action };
@@ -420,9 +494,23 @@ function setMarks(user, marks) {
         results[i] = { ok: false, num: num, id_raboty: idRaboty, error: String(err && err.message ? err.message : err) };
       }
     }
+
+    if (setCells.length > 0) sheet.getRangeList(setCells).setValue(today);
+    if (clearCells.length > 0) sheet.getRangeList(clearCells).clearContent();
   });
 
   return { ok: true, results: results };
+}
+
+/** A1-адрес ячейки по (row, col) 1-based — для getRangeList. */
+function a1_(row, col) {
+  var letters = '';
+  var c = col;
+  while (c > 0) {
+    letters = String.fromCharCode(65 + ((c - 1) % 26)) + letters;
+    c = Math.floor((c - 1) / 26);
+  }
+  return letters + row;
 }
 
 /**

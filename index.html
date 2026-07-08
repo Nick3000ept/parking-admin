@@ -449,34 +449,22 @@ body.has-selection { padding-bottom: 100px; }
 <div class="changelog-overlay" id="changelogOverlay">
   <div class="changelog-modal">
     <h2>Что нового</h2>
-    <div class="changelog-date">Обновление от 23 июня 2026</div>
+    <div class="changelog-date">Обновление от 8 июля 2026</div>
 
     <div class="changelog-section">
-      <h3>Новая работа: Укладка линолеума</h3>
-      <p>Добавлена работа <b>«Укладка линолеума»</b> в группу «Полы». Она появится в чипсах работ при следующей загрузке данных (F5).</p>
+      <h3>Массовое сохранение теперь надёжно</h3>
+      <p>Раньше при нажатии <b>«Сохранить»</b> с большим количеством отметок (100–200 и больше) запрос выполнялся несколько минут, обрывался по таймауту, и отметки слетали.</p>
+      <p><b>Теперь:</b> сервер обрабатывает весь пакет за несколько секунд — можно смело отмечать сотни помещений и сохранять одной кнопкой.</p>
     </div>
 
     <div class="changelog-section">
-      <h3>При выборе работы — только нужные помещения</h3>
-      <p>Раньше при выборе конкретной работы в матрице оставались все помещения — часть из них была затемнена (работа там не назначена).</p>
-      <p><b>Теперь:</b> при выборе работы видны только те помещения, где эта работа кому-то назначена. Цифры в шапке (помещений / площадь) считаются только по ним.</p>
+      <h3>Прогресс отправки на кнопке</h3>
+      <p>Большие пакеты уходят частями: на кнопке виден прогресс — <b>«Отправляем 150 из 300…»</b>. Если связь оборвалась, уже отправленные отметки сохранены, а остаток остаётся в кнопке «Сохранить» — просто нажмите её ещё раз.</p>
     </div>
 
     <div class="changelog-section warn">
-      <h3>Появилась кнопка <span class="chip-demo save">Сохранить N</span></h3>
-      <p>Раньше отметки уходили в Google Таблицу сразу при клике. Из-за этого при быстрой отметке многих помещений часть галочек терялась.</p>
-      <p><b>Теперь:</b> отмечайте сколько нужно, затем нажмите <b>«Сохранить»</b> в правом верхнем углу. Все отметки уйдут одним пакетом — ничего не потеряется.</p>
-    </div>
-
-    <div class="changelog-section warn">
-      <h3><span class="chip-demo pending">●&nbsp;101</span> Оранжевая рамка — отметка ещё не сохранена</h3>
-      <p>Если у карточки оранжевая рамка и точка — это значит, что галочку поставили, но в таблицу она ещё <b>не отправлена</b>.</p>
-      <p>Не закрывайте вкладку, пока не нажмёте «Сохранить» — иначе несохранённые отметки пропадут. Браузер предупредит при попытке закрыть страницу.</p>
-    </div>
-
-    <div class="changelog-section">
-      <h3>Площадь стен для работ по стенам</h3>
-      <p>Для работ <b>«Штукатурка стен»</b> и <b>«Покраска стен»</b> теперь во всех суммарах показывается площадь стен (а не пола, как раньше). Работает в трёх местах: попап помещения, сумматор мультивыбора снизу, прогресс в шапке.</p>
+      <h3><span class="chip-demo pending">●&nbsp;101</span> Напоминание: оранжевая рамка — отметка не сохранена</h3>
+      <p>Галочка поставлена, но в таблицу ещё <b>не отправлена</b>. Не закрывайте вкладку, пока не нажмёте «Сохранить» — браузер предупредит при попытке закрыть страницу.</p>
     </div>
 
     <div class="changelog-actions">
@@ -550,7 +538,7 @@ const DEFAULT_COLOR = '#E5E7EB';
 const STORAGE_TOKEN = 'parking_token';
 const STORAGE_DATA_PREFIX = 'parking_data_';
 const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
-const CHANGELOG_VERSION = '2026-06-23';
+const CHANGELOG_VERSION = '2026-07-08';
 
 // Работы, для которых релевантна площадь стен (а не пола)
 const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
@@ -1226,6 +1214,10 @@ function buildHint(num, idRaboty) {
 const markQueue = []; // [{action, num, idRaboty, mySeq, prev, hint}]
 const pendingByRoom = new Map(); // num -> Set(idRaboty) — для класса .pending на карточке
 let markFlushInFlight = false;
+// Максимум отметок в одном HTTP-запросе. Ограничивает длительность запроса
+// (защита от таймаутов браузера/GAS на сотнях отметок); при обрыве сети
+// теряется только текущий чанк — он вернётся в очередь, а не весь батч.
+const MARK_FLUSH_CHUNK = 150;
 
 function markPending(num, idRaboty) {
   let s = pendingByRoom.get(num);
@@ -1291,46 +1283,60 @@ async function flushMarks() {
   if (markQueue.length === 0) return;
 
   const batch = markQueue.splice(0);
-  const payload = batch.map(m => ({
-    action: m.action,
-    num: m.num,
-    id_raboty: m.idRaboty,
-    hint: m.hint
-  }));
-
   markFlushInFlight = true;
   const btn = document.getElementById('saveMarksBtn');
-  if (btn) btn.dataset.inflight = String(batch.length);
-  updateSaveButton();
 
-  let result;
+  // Уходит чанками по MARK_FLUSH_CHUNK последовательно. sent/results копят
+  // подтверждённое сервером; при общей ошибке остаток возвращается в очередь.
+  const sent = [];
+  const results = [];
+  let generalError = null;
+
   try {
-    result = await postAction('setMarks', { marks: payload });
+    for (let off = 0; off < batch.length; off += MARK_FLUSH_CHUNK) {
+      const chunk = batch.slice(off, off + MARK_FLUSH_CHUNK);
+      if (btn) btn.dataset.inflight = batch.length > MARK_FLUSH_CHUNK
+        ? Math.min(off + chunk.length, batch.length) + ' из ' + batch.length
+        : String(batch.length);
+      updateSaveButton();
+
+      const payload = chunk.map(m => ({
+        action: m.action,
+        num: m.num,
+        id_raboty: m.idRaboty,
+        hint: m.hint
+      }));
+      const result = await postAction('setMarks', { marks: payload });
+
+      if (!result.ok) {
+        // Сеть/общая ошибка — текущий чанк и всё неотправленное возвращаем в
+        // очередь, не откатываем optimistic UI: пусть пользователь повторит.
+        // Дедупликация: если по той же ячейке уже есть новый клик в markQueue —
+        // он актуальнее, старую запись отбрасываем (isStale всё равно бы сработал).
+        generalError = result.error || 'ошибка';
+        for (let i = batch.length - 1; i >= off; i--) {
+          const m = batch[i];
+          const dup = markQueue.find(x => x.num === m.num && x.idRaboty === m.idRaboty);
+          if (!dup) markQueue.unshift(m);
+        }
+        break;
+      }
+
+      const rr = result.results || [];
+      for (let i = 0; i < chunk.length; i++) {
+        sent.push(chunk[i]);
+        results.push(rr[i] || { ok: false, error: 'нет ответа' });
+      }
+    }
   } finally {
     markFlushInFlight = false;
     if (btn) delete btn.dataset.inflight;
   }
 
-  if (!result.ok) {
-    // Сеть/общая ошибка — возвращаем элементы обратно в очередь, не откатываем
-    // optimistic UI: пусть пользователь повторит. Карточки остаются .pending.
-    // Дедупликация: если по той же ячейке уже есть новый клик в markQueue —
-    // он актуальнее, старую запись отбрасываем (isStale всё равно бы сработал).
-    for (let i = batch.length - 1; i >= 0; i--) {
-      const m = batch[i];
-      const dup = markQueue.find(x => x.num === m.num && x.idRaboty === m.idRaboty);
-      if (!dup) markQueue.unshift(m);
-    }
-    updateSaveButton();
-    toast('Не удалось отправить: ' + (result.error || 'ошибка') + '. Нажмите «Сохранить» ещё раз.', true);
-    return;
-  }
-
-  const results = result.results || [];
   let okCount = 0, errCount = 0, lastErr = '';
-  for (let i = 0; i < batch.length; i++) {
-    const m = batch[i];
-    const r = results[i] || { ok: false, error: 'нет ответа' };
+  for (let i = 0; i < sent.length; i++) {
+    const m = sent[i];
+    const r = results[i];
     if (isStale(m.num, m.idRaboty, m.mySeq)) {
       // На эту ячейку был более свежий клик, уже снова в очереди — игнорируем
       // ответ. pending не снимаем: он держится новой записью из очереди.
@@ -1350,6 +1356,13 @@ async function flushMarks() {
   }
   updateProgress();
   saveCache();
+
+  if (generalError) {
+    updateSaveButton();
+    const done = okCount > 0 ? 'Сохранено: ' + okCount + '. ' : '';
+    toast(done + 'Не удалось отправить ' + markQueue.length + ': ' + generalError + '. Нажмите «Сохранить» ещё раз.', true);
+    return;
+  }
 
   if (errCount > 0) {
     toast(errCount === 1 ? 'Не сохранено 1 помещение: ' + lastErr : 'Не сохранено ' + errCount + ' помещений (последняя: ' + lastErr + ')', true);
