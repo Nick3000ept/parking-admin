@@ -500,7 +500,7 @@ body.has-selection { padding-bottom: 100px; }
     <div class="changelog-section">
       <h3>Кнопка «Аналитика»</h3>
       <p>В шапке появилась кнопка <b>«Аналитика»</b>: панель справа показывает объёмы выполненных работ по месяцам и видам работ — количество помещений и м² (для работ по стенам — площадь стен).</p>
-      <p>Подрядчик видит свои объёмы; администратор и наблюдатель — по всем подрядчикам, а при выбранном фильтре «Подрядчик» — только по нему.</p>
+      <p>Объёмы по всем подрядчикам видны всем. Администратор и наблюдатель при выбранном фильтре «Подрядчик» видят объёмы только по нему.</p>
     </div>
 
     <div class="changelog-section">
@@ -1533,12 +1533,11 @@ function monthLabel(ym) {
 }
 
 // Считает по всем отметкам с датой: месяц -> вид работ -> {count, area}.
-// Подрядчик видит только свои объёмы; admin/viewer — все, а если в фильтрах
-// выбран подрядчик — только его.
+// Объёмы по всем подрядчикам видны любой роли. Если admin/viewer выбрал
+// подрядчика в фильтрах — считаем только его.
 function buildAnalyticsData() {
   const user = state.data.user;
-  const seesAll = user.isAdmin || user.isViewer;
-  const contractorFilter = seesAll ? state.filters.contractor : '';
+  const contractorFilter = (user.isAdmin || user.isViewer) ? state.filters.contractor : '';
   const byMonth = new Map(); // 'yyyy-MM' -> Map(id_raboty -> {count, area})
   const totals = new Map();  // id_raboty -> {count, area}
 
@@ -1554,7 +1553,6 @@ function buildAnalyticsData() {
     for (const wid in assignments) {
       const a = assignments[wid];
       if (!a || !a.date) continue;
-      if (!seesAll && a.sp !== user.name) continue;
       if (contractorFilter && a.sp !== contractorFilter) continue;
       const ym = String(a.date).slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
@@ -1591,13 +1589,9 @@ function analyticsTable(map) {
 }
 
 function renderAnalytics() {
-  const user = state.data.user;
-  const seesAll = user.isAdmin || user.isViewer;
   const data = buildAnalyticsData();
 
-  const scope = seesAll
-    ? (data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики')
-    : user.name;
+  const scope = data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики';
   document.getElementById('analyticsSubtitle').textContent = 'Объёмы по месяцам · ' + scope;
 
   const body = document.getElementById('analyticsBody');
