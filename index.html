@@ -307,6 +307,51 @@ body.has-selection { padding-bottom: 100px; }
   cursor: pointer;
 }
 .changelog-modal .changelog-actions button:hover { background: #1D4ED8; }
+
+/* ===== ANALYTICS DRAWER ===== */
+.analytics-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+  display: none; z-index: 100;
+}
+.analytics-overlay.show { display: block; }
+.analytics-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 480px;
+  background: #fff; box-shadow: -10px 0 30px rgba(0,0,0,0.25);
+  display: flex; flex-direction: column;
+  animation: analytics-slide-in 0.2s ease-out;
+}
+@keyframes analytics-slide-in {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.analytics-head {
+  display: flex; justify-content: space-between; align-items: start;
+  padding: 14px 20px; background: #1F2937; color: #fff; flex-shrink: 0;
+}
+.analytics-head .analytics-title { font-size: 18px; font-weight: 600; }
+.analytics-head .analytics-subtitle { font-size: 12px; opacity: 0.65; margin-top: 2px; }
+.analytics-head .popup-close { color: #9CA3AF; }
+.analytics-head .popup-close:hover { color: #fff; }
+.analytics-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 13px; }
+.analytics-month { margin-bottom: 22px; }
+.analytics-month h3 {
+  font-size: 14px; color: #111827; margin-bottom: 8px;
+  padding-bottom: 4px; border-bottom: 2px solid #1F2937;
+}
+.analytics-month.total h3 { border-bottom-color: #2563EB; color: #2563EB; }
+.analytics-table { width: 100%; border-collapse: collapse; }
+.analytics-table th {
+  text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: #9CA3AF; padding: 4px 6px; border-bottom: 1px solid #E5E7EB;
+}
+.analytics-table th.num, .analytics-table td.num { text-align: right; white-space: nowrap; }
+.analytics-table td { padding: 5px 6px; border-bottom: 1px solid #F3F4F6; color: #374151; }
+.analytics-table tr.month-total td {
+  font-weight: 700; color: #111827;
+  border-top: 2px solid #E5E7EB; border-bottom: none;
+}
+.analytics-note { color: #9CA3AF; font-size: 11px; margin-top: 10px; line-height: 1.4; }
+.analytics-empty { color: #6B7280; padding: 30px 0; text-align: center; }
 .popup-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
 .popup-title { font-size: 18px; font-weight: 600; }
 .popup-subtitle { color: #6B7280; font-size: 13px; margin-top: 2px; }
@@ -375,6 +420,7 @@ body.has-selection { padding-bottom: 100px; }
   <span class="user-badge" id="userBadge"></span>
   <div class="progress" id="progressEl"></div>
   <div class="actions">
+    <button id="analyticsBtn" title="Объёмы выполненных работ по месяцам и видам работ">Аналитика</button>
     <button id="saveMarksBtn" class="save-marks-btn" style="display:none" title="Отправить накопленные отметки в Google Sheets">Сохранить 0</button>
     <button id="markModeBtn" class="mark-mode-btn" title="При активном режиме клик по карточке ставит/снимает отметку. Иначе — открывает попап.">Режим отметки</button>
   </div>
@@ -449,7 +495,13 @@ body.has-selection { padding-bottom: 100px; }
 <div class="changelog-overlay" id="changelogOverlay">
   <div class="changelog-modal">
     <h2>Что нового</h2>
-    <div class="changelog-date">Обновление от 8 июля 2026</div>
+    <div class="changelog-date">Обновление от 9 июля 2026</div>
+
+    <div class="changelog-section">
+      <h3>Кнопка «Аналитика»</h3>
+      <p>В шапке появилась кнопка <b>«Аналитика»</b>: панель справа показывает объёмы выполненных работ по месяцам и видам работ — количество помещений и м² (для работ по стенам — площадь стен).</p>
+      <p>Подрядчик видит свои объёмы; администратор и наблюдатель — по всем подрядчикам, а при выбранном фильтре «Подрядчик» — только по нему.</p>
+    </div>
 
     <div class="changelog-section">
       <h3>Массовое сохранение теперь надёжно</h3>
@@ -470,6 +522,20 @@ body.has-selection { padding-bottom: 100px; }
     <div class="changelog-actions">
       <button id="changelogCloseBtn">Понятно</button>
     </div>
+  </div>
+</div>
+
+<!-- ===== Analytics drawer ===== -->
+<div class="analytics-overlay" id="analyticsOverlay">
+  <div class="analytics-drawer">
+    <div class="analytics-head">
+      <div>
+        <div class="analytics-title">Аналитика</div>
+        <div class="analytics-subtitle" id="analyticsSubtitle"></div>
+      </div>
+      <button class="popup-close" id="analyticsCloseBtn" title="Закрыть">×</button>
+    </div>
+    <div class="analytics-body" id="analyticsBody"></div>
   </div>
 </div>
 
@@ -538,7 +604,7 @@ const DEFAULT_COLOR = '#E5E7EB';
 const STORAGE_TOKEN = 'parking_token';
 const STORAGE_DATA_PREFIX = 'parking_data_';
 const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
-const CHANGELOG_VERSION = '2026-07-08';
+const CHANGELOG_VERSION = '2026-07-09';
 
 // Работы, для которых релевантна площадь стен (а не пола)
 const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
@@ -1453,6 +1519,113 @@ function saveCache() {
 }
 
 // ============================================================================
+// Analytics drawer — объёмы выполненного по месяцам и видам работ
+// ============================================================================
+const MONTH_NAMES_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+const fmtInt = (n) => Math.round(n).toLocaleString('ru-RU').replace(/,/g, ' ');
+
+function monthLabel(ym) {
+  const m = /^(\d{4})-(\d{2})/.exec(ym);
+  if (!m) return ym;
+  return (MONTH_NAMES_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1];
+}
+
+// Считает по всем отметкам с датой: месяц -> вид работ -> {count, area}.
+// Подрядчик видит только свои объёмы; admin/viewer — все, а если в фильтрах
+// выбран подрядчик — только его.
+function buildAnalyticsData() {
+  const user = state.data.user;
+  const seesAll = user.isAdmin || user.isViewer;
+  const contractorFilter = seesAll ? state.filters.contractor : '';
+  const byMonth = new Map(); // 'yyyy-MM' -> Map(id_raboty -> {count, area})
+  const totals = new Map();  // id_raboty -> {count, area}
+
+  const add = (map, wid, area) => {
+    let x = map.get(wid);
+    if (!x) { x = { count: 0, area: 0 }; map.set(wid, x); }
+    x.count += 1;
+    x.area += area;
+  };
+
+  state.data.rooms.forEach(room => {
+    const assignments = state.data.assignments[room.num] || {};
+    for (const wid in assignments) {
+      const a = assignments[wid];
+      if (!a || !a.date) continue;
+      if (!seesAll && a.sp !== user.name) continue;
+      if (contractorFilter && a.sp !== contractorFilter) continue;
+      const ym = String(a.date).slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      let monthMap = byMonth.get(ym);
+      if (!monthMap) { monthMap = new Map(); byMonth.set(ym, monthMap); }
+      const area = roomAreaFor(room, wid);
+      add(monthMap, wid, area);
+      add(totals, wid, area);
+    }
+  });
+
+  return { byMonth, totals, contractorFilter };
+}
+
+function analyticsTable(map) {
+  let rows = '';
+  let cSum = 0, aSum = 0;
+  state.data.works.forEach(w => {
+    const x = map.get(w.id_raboty);
+    if (!x) return;
+    cSum += x.count;
+    aSum += x.area;
+    rows += `<tr>
+      <td>${escapeHtml(w.full_name)}${isWallWork(w.id_raboty) ? ' *' : ''}</td>
+      <td class="num">${fmtInt(x.count)}</td>
+      <td class="num">${fmtInt(x.area)}</td>
+    </tr>`;
+  });
+  rows += `<tr class="month-total"><td>Итого</td><td class="num">${fmtInt(cSum)}</td><td class="num">${fmtInt(aSum)}</td></tr>`;
+  return `<table class="analytics-table">
+    <thead><tr><th>Вид работ</th><th class="num">Помещений</th><th class="num">м²</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderAnalytics() {
+  const user = state.data.user;
+  const seesAll = user.isAdmin || user.isViewer;
+  const data = buildAnalyticsData();
+
+  const scope = seesAll
+    ? (data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики')
+    : user.name;
+  document.getElementById('analyticsSubtitle').textContent = 'Объёмы по месяцам · ' + scope;
+
+  const body = document.getElementById('analyticsBody');
+  if (data.totals.size === 0) {
+    body.innerHTML = '<div class="analytics-empty">Пока нет выполненных работ с датами.</div>';
+    return;
+  }
+
+  const months = Array.from(data.byMonth.keys()).sort().reverse();
+  let html = '';
+  months.forEach(ym => {
+    html += '<div class="analytics-month"><h3>' + monthLabel(ym) + '</h3>' + analyticsTable(data.byMonth.get(ym)) + '</div>';
+  });
+  html += '<div class="analytics-month total"><h3>За всё время</h3>' + analyticsTable(data.totals) + '</div>';
+  html += '<div class="analytics-note">м² — площадь пола помещения; для работ по стенам (*) — площадь стен. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>';
+  body.innerHTML = html;
+}
+
+function openAnalytics() {
+  renderAnalytics();
+  document.getElementById('analyticsOverlay').classList.add('show');
+}
+
+function closeAnalytics() {
+  document.getElementById('analyticsOverlay').classList.remove('show');
+}
+
+// ============================================================================
 // Popup
 // ============================================================================
 let popupRoom = null;
@@ -1573,6 +1746,11 @@ function bindUI() {
   });
   document.getElementById('saveMarksBtn').addEventListener('click', flushMarks);
   document.getElementById('changelogCloseBtn').addEventListener('click', closeChangelog);
+  document.getElementById('analyticsBtn').addEventListener('click', openAnalytics);
+  document.getElementById('analyticsCloseBtn').addEventListener('click', closeAnalytics);
+  document.getElementById('analyticsOverlay').addEventListener('click', e => {
+    if (e.target.id === 'analyticsOverlay') closeAnalytics();
+  });
   document.getElementById('changelogOverlay').addEventListener('click', e => {
     if (e.target.id === 'changelogOverlay') closeChangelog();
   });
@@ -1639,6 +1817,7 @@ function bindUI() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       closePopup();
+      closeAnalytics();
       if (state.selected.size > 0) clearSelection();
     }
   });
