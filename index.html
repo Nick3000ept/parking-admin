@@ -1662,7 +1662,8 @@ function renderPopup(room) {
     <div class="popup-meta">
       <div><span class="label">Корпус</span><br>${escapeHtml(room.korp)}</div>
       <div><span class="label">Этаж</span><br>${escapeHtml(room.floor)}</div>
-      <div><span class="label">${areaLabelFor(state.filters.work)}</span><br>${escapeHtml(roomAreaDisplayFor(room, state.filters.work))} м²</div>
+      <div><span class="label">Площадь пола</span><br>${escapeHtml(room.area || '—')} м²</div>
+      <div><span class="label">Площадь стен</span><br>${escapeHtml(room.walls || '—')} м²</div>
       <div><span class="label">Периметр</span><br>${escapeHtml(room.perim || '—')} м</div>
       <div><span class="label">Захватка</span><br>${escapeHtml(room.zahvatka || '—')}</div>
       <div><span class="label">Тип (КС)</span><br>${escapeHtml(room.ks || '—')}</div>
