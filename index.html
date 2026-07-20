@@ -621,6 +621,8 @@ const CHANGELOG_VERSION = '2026-07-09';
 
 // Работы, для которых релевантна площадь стен (а не пола)
 const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
+const DOOR_WORK_IDS = new Set(['doors']);
+const isDoorWork = (workId) => !!workId && DOOR_WORK_IDS.has(workId);
 const parseArea = (v) => parseFloat(String(v || '').replace(',', '.').replace(/\s/g, '')) || 0;
 const isWallWork = (workId) => !!workId && WALL_WORK_IDS.has(workId);
 const roomAreaFor = (room, workId) => parseArea(isWallWork(workId) ? room.walls : room.area);
@@ -1544,14 +1546,22 @@ function monthShortLabel(ym) {
   return (MONTH_SHORT_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1].slice(2);
 }
 
-// Считает по всем отметкам с датой: работа -> месяц -> м², и работа -> подрядчик -> месяц -> м².
+// Считает по всем отметкам с датой: работа -> месяц -> {count, area}, и работа -> подрядчик -> месяц -> {count, area}.
+// Для дверей показываем count (штуки), для остальных работ — area (м²).
 // Объёмы по всем подрядчикам видны любой роли. Если admin/viewer выбрал
 // подрядчика в фильтрах — считаем только его.
 function buildAnalyticsPivot() {
   const user = state.data.user;
   const contractorFilter = (user.isAdmin || user.isViewer) ? state.filters.contractor : '';
   const monthsSet = new Set();
-  const workMap = new Map(); // id_raboty -> { months: Map(ym->area), total, byContractor: Map(sp->{months, total}) }
+  const workMap = new Map(); // id_raboty -> { months: Map(ym->{count,area}), total:{count,area}, byContractor: Map(sp->{months, total}) }
+
+  const addTo = (bucket, key, area) => {
+    let x = bucket.get(key);
+    if (!x) { x = { count: 0, area: 0 }; bucket.set(key, x); }
+    x.count += 1;
+    x.area += area;
+  };
 
   state.data.rooms.forEach(room => {
     const assignments = state.data.assignments[room.num] || {};
@@ -1565,15 +1575,17 @@ function buildAnalyticsPivot() {
       const area = roomAreaFor(room, wid);
 
       let w = workMap.get(wid);
-      if (!w) { w = { months: new Map(), total: 0, byContractor: new Map() }; workMap.set(wid, w); }
-      w.months.set(ym, (w.months.get(ym) || 0) + area);
-      w.total += area;
+      if (!w) { w = { months: new Map(), total: { count: 0, area: 0 }, byContractor: new Map() }; workMap.set(wid, w); }
+      addTo(w.months, ym, area);
+      w.total.count += 1;
+      w.total.area += area;
 
       const spName = a.sp || '—';
       let c = w.byContractor.get(spName);
-      if (!c) { c = { months: new Map(), total: 0 }; w.byContractor.set(spName, c); }
-      c.months.set(ym, (c.months.get(ym) || 0) + area);
-      c.total += area;
+      if (!c) { c = { months: new Map(), total: { count: 0, area: 0 } }; w.byContractor.set(spName, c); }
+      addTo(c.months, ym, area);
+      c.total.count += 1;
+      c.total.area += area;
     }
   });
 
@@ -1604,12 +1616,18 @@ function renderAnalytics() {
     const x = data.workMap.get(w.id_raboty);
     if (!x) return;
     const expanded = analyticsExpanded.has(w.id_raboty);
-    const unit = isWallWork(w.id_raboty) ? 'м² стен' : 'м² пола';
-    months.forEach((ym, i) => { grandTotals[i] += x.months.get(ym) || 0; });
-    grandTotal += x.total;
+    const isDoor = isDoorWork(w.id_raboty);
+    const unit = isDoor ? 'шт' : (isWallWork(w.id_raboty) ? 'м² стен' : 'м² пола');
+    const metric = (bucket) => isDoor ? bucket.count : bucket.area;
+    // Двери — в штуках, остальные работы — в м²: в общий итог (только м²) двери не суммируем.
+    if (!isDoor) {
+      months.forEach((ym, i) => { const b = x.months.get(ym); grandTotals[i] += b ? b.area : 0; });
+      grandTotal += x.total.area;
+    }
 
     const cells = months.map(ym => {
-      const v = x.months.get(ym);
+      const b = x.months.get(ym);
+      const v = b ? metric(b) : 0;
       return `<td class="num">${v ? fmtInt(v) : '—'}</td>`;
     }).join('');
 
@@ -1617,35 +1635,36 @@ function renderAnalytics() {
       <td><span class="analytics-arrow">▸</span>${escapeHtml(w.full_name)}</td>
       <td class="unit">${unit}</td>
       ${cells}
-      <td class="num analytics-total-col">${fmtInt(x.total)}</td>
+      <td class="num analytics-total-col">${fmtInt(metric(x.total))}</td>
     </tr>`;
 
     if (expanded) {
-      const contractors = Array.from(x.byContractor.keys()).sort((a, b) => x.byContractor.get(b).total - x.byContractor.get(a).total);
+      const contractors = Array.from(x.byContractor.keys()).sort((a, b) => metric(x.byContractor.get(b).total) - metric(x.byContractor.get(a).total));
       contractors.forEach(sp => {
         const c = x.byContractor.get(sp);
         const subCells = months.map(ym => {
-          const v = c.months.get(ym);
+          const b = c.months.get(ym);
+          const v = b ? metric(b) : 0;
           return `<td class="num">${v ? fmtInt(v) : '—'}</td>`;
         }).join('');
         rows += `<tr class="analytics-subrow">
           <td>${escapeHtml(sp)}</td>
           <td class="unit"></td>
           ${subCells}
-          <td class="num">${fmtInt(c.total)}</td>
+          <td class="num">${fmtInt(metric(c.total))}</td>
         </tr>`;
       });
     }
   });
 
   const totalCells = grandTotals.map(v => `<td class="num">${v ? fmtInt(v) : '—'}</td>`).join('');
-  rows += `<tr class="analytics-total-row"><td>Итого</td><td class="unit"></td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
+  rows += `<tr class="analytics-total-row"><td>Итого</td><td class="unit">м²</td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
 
   body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="analytics-note">Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
+    <div class="analytics-note">Двери считаются в штуках и не входят в строку «Итого» (там сумма по м²). Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
 }
 
 function openAnalytics() {
