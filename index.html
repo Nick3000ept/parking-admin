@@ -308,21 +308,22 @@ body.has-selection { padding-bottom: 100px; }
 }
 .changelog-modal .changelog-actions button:hover { background: #1D4ED8; }
 
-/* ===== ANALYTICS DRAWER ===== */
+/* ===== ANALYTICS MODAL ===== */
 .analytics-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
   display: none; z-index: 100;
+  align-items: center; justify-content: center; padding: 24px;
 }
-.analytics-overlay.show { display: block; }
+.analytics-overlay.show { display: flex; }
 .analytics-drawer {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 480px;
-  background: #fff; box-shadow: -10px 0 30px rgba(0,0,0,0.25);
-  display: flex; flex-direction: column;
-  animation: analytics-slide-in 0.2s ease-out;
+  position: relative; width: min(980px, 94vw); max-height: 88vh;
+  background: #fff; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: analytics-pop-in 0.15s ease-out;
 }
-@keyframes analytics-slide-in {
-  from { transform: translateX(40px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+@keyframes analytics-pop-in {
+  from { transform: scale(0.97); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 .analytics-head {
   display: flex; justify-content: space-between; align-items: start;
@@ -338,12 +339,15 @@ body.has-selection { padding-bottom: 100px; }
 .analytics-pivot th {
   text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
   color: #9CA3AF; padding: 5px 8px; border-bottom: 1px solid #E5E7EB; white-space: nowrap;
+  position: sticky; top: 0; background: #fff; z-index: 2;
 }
 .analytics-pivot th:first-child, .analytics-pivot td:first-child {
   text-align: left; position: sticky; left: 0; background: #fff;
 }
+.analytics-pivot th:first-child { z-index: 3; }
 .analytics-pivot td { padding: 6px 8px; border-bottom: 1px solid #F3F4F6; color: #374151; white-space: nowrap; }
 .analytics-pivot td.num, .analytics-pivot th.num { text-align: right; }
+.analytics-pivot td.unit, .analytics-pivot th.unit { color: #9CA3AF; font-size: 11px; }
 .analytics-pivot tr.analytics-row { cursor: pointer; }
 .analytics-pivot tr.analytics-row:hover td { background: #F9FAFB; }
 .analytics-pivot tr.analytics-row.expanded td:first-child { font-weight: 600; color: #111827; }
@@ -1589,7 +1593,8 @@ function renderAnalytics() {
   }
 
   const months = data.months;
-  const head = '<th>Вид работ</th>' + months.map(ym => `<th class="num">${escapeHtml(monthShortLabel(ym))}</th>`).join('') + '<th class="num">Итого</th>';
+  const head = '<th>Вид работ</th><th class="unit">Ед. изм.</th>' +
+    months.map(ym => `<th class="num">${escapeHtml(monthShortLabel(ym))}</th>`).join('') + '<th class="num">Итого</th>';
 
   let rows = '';
   const grandTotals = months.map(() => 0);
@@ -1599,6 +1604,7 @@ function renderAnalytics() {
     const x = data.workMap.get(w.id_raboty);
     if (!x) return;
     const expanded = analyticsExpanded.has(w.id_raboty);
+    const unit = isWallWork(w.id_raboty) ? 'м² стен' : 'м² пола';
     months.forEach((ym, i) => { grandTotals[i] += x.months.get(ym) || 0; });
     grandTotal += x.total;
 
@@ -1608,7 +1614,8 @@ function renderAnalytics() {
     }).join('');
 
     rows += `<tr class="analytics-row ${expanded ? 'expanded' : ''}" data-wid="${escapeHtml(w.id_raboty)}">
-      <td><span class="analytics-arrow">▸</span>${escapeHtml(w.full_name)}${isWallWork(w.id_raboty) ? ' *' : ''}</td>
+      <td><span class="analytics-arrow">▸</span>${escapeHtml(w.full_name)}</td>
+      <td class="unit">${unit}</td>
       ${cells}
       <td class="num analytics-total-col">${fmtInt(x.total)}</td>
     </tr>`;
@@ -1623,6 +1630,7 @@ function renderAnalytics() {
         }).join('');
         rows += `<tr class="analytics-subrow">
           <td>${escapeHtml(sp)}</td>
+          <td class="unit"></td>
           ${subCells}
           <td class="num">${fmtInt(c.total)}</td>
         </tr>`;
@@ -1631,13 +1639,13 @@ function renderAnalytics() {
   });
 
   const totalCells = grandTotals.map(v => `<td class="num">${v ? fmtInt(v) : '—'}</td>`).join('');
-  rows += `<tr class="analytics-total-row"><td>Итого</td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
+  rows += `<tr class="analytics-total-row"><td>Итого</td><td class="unit"></td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
 
   body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="analytics-note">Значения в м²: для обычных работ — площадь пола, для работ по стенам (*) — площадь стен. Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
+    <div class="analytics-note">Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
 }
 
 function openAnalytics() {
