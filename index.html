@@ -334,6 +334,12 @@ body.has-selection { padding-bottom: 100px; }
 .analytics-head .popup-close { color: #9CA3AF; }
 .analytics-head .popup-close:hover { color: #fff; }
 .analytics-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 13px; }
+.analytics-summary {
+  font-size: 14px; color: #111827; margin-bottom: 14px; padding-bottom: 12px;
+  border-bottom: 1px solid #E5E7EB;
+}
+.analytics-summary b { font-weight: 700; }
+.analytics-summary-pct { color: #6B7280; font-size: 12px; }
 .analytics-pivot-wrap { overflow-x: auto; }
 .analytics-pivot { width: 100%; border-collapse: collapse; font-size: 12px; }
 .analytics-pivot th {
@@ -1563,12 +1569,18 @@ function buildAnalyticsPivot() {
     x.area += area;
   };
 
+  let totalAssigned = 0, totalDone = 0;
+
   state.data.rooms.forEach(room => {
     const assignments = state.data.assignments[room.num] || {};
     for (const wid in assignments) {
       const a = assignments[wid];
-      if (!a || !a.date) continue;
+      if (!a || !a.sp) continue; // применимость работы к помещению = есть СП
       if (contractorFilter && a.sp !== contractorFilter) continue;
+      totalAssigned += 1;
+      if (a.date) totalDone += 1;
+
+      if (!a.date) continue;
       const ym = String(a.date).slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
       monthsSet.add(ym);
@@ -1589,7 +1601,7 @@ function buildAnalyticsPivot() {
     }
   });
 
-  return { months: Array.from(monthsSet).sort(), workMap, contractorFilter };
+  return { months: Array.from(monthsSet).sort(), workMap, contractorFilter, totalAssigned, totalDone };
 }
 
 function renderAnalytics() {
@@ -1598,9 +1610,15 @@ function renderAnalytics() {
   const scope = data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики';
   document.getElementById('analyticsSubtitle').textContent = 'Объёмы по работам и месяцам · ' + scope;
 
+  const percent = data.totalAssigned ? Math.round(data.totalDone / data.totalAssigned * 100) : 0;
+  const summaryHtml = `<div class="analytics-summary">
+    Общий объём работ: <b>${fmtInt(data.totalDone)}</b> из <b>${fmtInt(data.totalAssigned)}</b> готово
+    <span class="analytics-summary-pct">(${percent}%)</span>
+  </div>`;
+
   const body = document.getElementById('analyticsBody');
   if (data.workMap.size === 0) {
-    body.innerHTML = '<div class="analytics-empty">Пока нет выполненных работ с датами.</div>';
+    body.innerHTML = summaryHtml + '<div class="analytics-empty">Пока нет выполненных работ с датами.</div>';
     return;
   }
 
@@ -1660,7 +1678,7 @@ function renderAnalytics() {
   const totalCells = grandTotals.map(v => `<td class="num">${v ? fmtInt(v) : '—'}</td>`).join('');
   rows += `<tr class="analytics-total-row"><td>Итого</td><td class="unit">м²</td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
 
-  body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
+  body.innerHTML = summaryHtml + `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
