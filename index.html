@@ -333,22 +333,31 @@ body.has-selection { padding-bottom: 100px; }
 .analytics-head .popup-close { color: #9CA3AF; }
 .analytics-head .popup-close:hover { color: #fff; }
 .analytics-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 13px; }
-.analytics-month { margin-bottom: 22px; }
-.analytics-month h3 {
-  font-size: 14px; color: #111827; margin-bottom: 8px;
-  padding-bottom: 4px; border-bottom: 2px solid #1F2937;
+.analytics-pivot-wrap { overflow-x: auto; }
+.analytics-pivot { width: 100%; border-collapse: collapse; font-size: 12px; }
+.analytics-pivot th {
+  text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: #9CA3AF; padding: 5px 8px; border-bottom: 1px solid #E5E7EB; white-space: nowrap;
 }
-.analytics-month.total h3 { border-bottom-color: #2563EB; color: #2563EB; }
-.analytics-table { width: 100%; border-collapse: collapse; }
-.analytics-table th {
-  text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
-  color: #9CA3AF; padding: 4px 6px; border-bottom: 1px solid #E5E7EB;
+.analytics-pivot th:first-child, .analytics-pivot td:first-child {
+  text-align: left; position: sticky; left: 0; background: #fff;
 }
-.analytics-table th.num, .analytics-table td.num { text-align: right; white-space: nowrap; }
-.analytics-table td { padding: 5px 6px; border-bottom: 1px solid #F3F4F6; color: #374151; }
-.analytics-table tr.month-total td {
-  font-weight: 700; color: #111827;
-  border-top: 2px solid #E5E7EB; border-bottom: none;
+.analytics-pivot td { padding: 6px 8px; border-bottom: 1px solid #F3F4F6; color: #374151; white-space: nowrap; }
+.analytics-pivot td.num, .analytics-pivot th.num { text-align: right; }
+.analytics-pivot tr.analytics-row { cursor: pointer; }
+.analytics-pivot tr.analytics-row:hover td { background: #F9FAFB; }
+.analytics-pivot tr.analytics-row.expanded td:first-child { font-weight: 600; color: #111827; }
+.analytics-arrow {
+  display: inline-block; width: 12px; color: #9CA3AF; transition: transform 0.15s;
+}
+.analytics-row.expanded .analytics-arrow { transform: rotate(90deg); color: #374151; }
+.analytics-total-col { font-weight: 600; }
+.analytics-pivot tr.analytics-subrow td {
+  color: #6B7280; font-size: 11.5px; border-bottom: 1px dashed #F3F4F6;
+}
+.analytics-pivot tr.analytics-subrow td:first-child { padding-left: 26px; }
+.analytics-pivot tr.analytics-total-row td {
+  font-weight: 700; color: #111827; border-top: 2px solid #E5E7EB; border-bottom: none;
 }
 .analytics-note { color: #9CA3AF; font-size: 11px; margin-top: 10px; line-height: 1.4; }
 .analytics-empty { color: #6B7280; padding: 30px 0; text-align: center; }
@@ -1519,34 +1528,26 @@ function saveCache() {
 }
 
 // ============================================================================
-// Analytics drawer — объёмы выполненного по месяцам и видам работ
+// Analytics drawer — сводная таблица: работы × месяцы, разбивка по подрядчикам
 // ============================================================================
-const MONTH_NAMES_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
-  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-
+const MONTH_SHORT_RU = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const fmtInt = (n) => Math.round(n).toLocaleString('ru-RU').replace(/,/g, ' ');
+const analyticsExpanded = new Set(); // id_raboty развёрнутых строк
 
-function monthLabel(ym) {
+function monthShortLabel(ym) {
   const m = /^(\d{4})-(\d{2})/.exec(ym);
   if (!m) return ym;
-  return (MONTH_NAMES_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1];
+  return (MONTH_SHORT_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1].slice(2);
 }
 
-// Считает по всем отметкам с датой: месяц -> вид работ -> {count, area}.
+// Считает по всем отметкам с датой: работа -> месяц -> м², и работа -> подрядчик -> месяц -> м².
 // Объёмы по всем подрядчикам видны любой роли. Если admin/viewer выбрал
 // подрядчика в фильтрах — считаем только его.
-function buildAnalyticsData() {
+function buildAnalyticsPivot() {
   const user = state.data.user;
   const contractorFilter = (user.isAdmin || user.isViewer) ? state.filters.contractor : '';
-  const byMonth = new Map(); // 'yyyy-MM' -> Map(id_raboty -> {count, area})
-  const totals = new Map();  // id_raboty -> {count, area}
-
-  const add = (map, wid, area) => {
-    let x = map.get(wid);
-    if (!x) { x = { count: 0, area: 0 }; map.set(wid, x); }
-    x.count += 1;
-    x.area += area;
-  };
+  const monthsSet = new Set();
+  const workMap = new Map(); // id_raboty -> { months: Map(ym->area), total, byContractor: Map(sp->{months, total}) }
 
   state.data.rooms.forEach(room => {
     const assignments = state.data.assignments[room.num] || {};
@@ -1556,67 +1557,105 @@ function buildAnalyticsData() {
       if (contractorFilter && a.sp !== contractorFilter) continue;
       const ym = String(a.date).slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
-      let monthMap = byMonth.get(ym);
-      if (!monthMap) { monthMap = new Map(); byMonth.set(ym, monthMap); }
+      monthsSet.add(ym);
       const area = roomAreaFor(room, wid);
-      add(monthMap, wid, area);
-      add(totals, wid, area);
+
+      let w = workMap.get(wid);
+      if (!w) { w = { months: new Map(), total: 0, byContractor: new Map() }; workMap.set(wid, w); }
+      w.months.set(ym, (w.months.get(ym) || 0) + area);
+      w.total += area;
+
+      const spName = a.sp || '—';
+      let c = w.byContractor.get(spName);
+      if (!c) { c = { months: new Map(), total: 0 }; w.byContractor.set(spName, c); }
+      c.months.set(ym, (c.months.get(ym) || 0) + area);
+      c.total += area;
     }
   });
 
-  return { byMonth, totals, contractorFilter };
-}
-
-function analyticsTable(map) {
-  let rows = '';
-  let cSum = 0, aSum = 0;
-  state.data.works.forEach(w => {
-    const x = map.get(w.id_raboty);
-    if (!x) return;
-    cSum += x.count;
-    aSum += x.area;
-    rows += `<tr>
-      <td>${escapeHtml(w.full_name)}${isWallWork(w.id_raboty) ? ' *' : ''}</td>
-      <td class="num">${fmtInt(x.count)}</td>
-      <td class="num">${fmtInt(x.area)}</td>
-    </tr>`;
-  });
-  rows += `<tr class="month-total"><td>Итого</td><td class="num">${fmtInt(cSum)}</td><td class="num">${fmtInt(aSum)}</td></tr>`;
-  return `<table class="analytics-table">
-    <thead><tr><th>Вид работ</th><th class="num">Помещений</th><th class="num">м²</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  return { months: Array.from(monthsSet).sort(), workMap, contractorFilter };
 }
 
 function renderAnalytics() {
-  const data = buildAnalyticsData();
+  const data = buildAnalyticsPivot();
 
   const scope = data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики';
-  document.getElementById('analyticsSubtitle').textContent = 'Объёмы по месяцам · ' + scope;
+  document.getElementById('analyticsSubtitle').textContent = 'Объёмы по работам и месяцам · ' + scope;
 
   const body = document.getElementById('analyticsBody');
-  if (data.totals.size === 0) {
+  if (data.workMap.size === 0) {
     body.innerHTML = '<div class="analytics-empty">Пока нет выполненных работ с датами.</div>';
     return;
   }
 
-  const months = Array.from(data.byMonth.keys()).sort().reverse();
-  let html = '';
-  months.forEach(ym => {
-    html += '<div class="analytics-month"><h3>' + monthLabel(ym) + '</h3>' + analyticsTable(data.byMonth.get(ym)) + '</div>';
+  const months = data.months;
+  const head = '<th>Вид работ</th>' + months.map(ym => `<th class="num">${escapeHtml(monthShortLabel(ym))}</th>`).join('') + '<th class="num">Итого</th>';
+
+  let rows = '';
+  const grandTotals = months.map(() => 0);
+  let grandTotal = 0;
+
+  state.data.works.forEach(w => {
+    const x = data.workMap.get(w.id_raboty);
+    if (!x) return;
+    const expanded = analyticsExpanded.has(w.id_raboty);
+    months.forEach((ym, i) => { grandTotals[i] += x.months.get(ym) || 0; });
+    grandTotal += x.total;
+
+    const cells = months.map(ym => {
+      const v = x.months.get(ym);
+      return `<td class="num">${v ? fmtInt(v) : '—'}</td>`;
+    }).join('');
+
+    rows += `<tr class="analytics-row ${expanded ? 'expanded' : ''}" data-wid="${escapeHtml(w.id_raboty)}">
+      <td><span class="analytics-arrow">▸</span>${escapeHtml(w.full_name)}${isWallWork(w.id_raboty) ? ' *' : ''}</td>
+      ${cells}
+      <td class="num analytics-total-col">${fmtInt(x.total)}</td>
+    </tr>`;
+
+    if (expanded) {
+      const contractors = Array.from(x.byContractor.keys()).sort((a, b) => x.byContractor.get(b).total - x.byContractor.get(a).total);
+      contractors.forEach(sp => {
+        const c = x.byContractor.get(sp);
+        const subCells = months.map(ym => {
+          const v = c.months.get(ym);
+          return `<td class="num">${v ? fmtInt(v) : '—'}</td>`;
+        }).join('');
+        rows += `<tr class="analytics-subrow">
+          <td>${escapeHtml(sp)}</td>
+          ${subCells}
+          <td class="num">${fmtInt(c.total)}</td>
+        </tr>`;
+      });
+    }
   });
-  html += '<div class="analytics-month total"><h3>За всё время</h3>' + analyticsTable(data.totals) + '</div>';
-  html += '<div class="analytics-note">м² — площадь пола помещения; для работ по стенам (*) — площадь стен. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>';
-  body.innerHTML = html;
+
+  const totalCells = grandTotals.map(v => `<td class="num">${v ? fmtInt(v) : '—'}</td>`).join('');
+  rows += `<tr class="analytics-total-row"><td>Итого</td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
+
+  body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
+      <thead><tr>${head}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="analytics-note">Значения в м²: для обычных работ — площадь пола, для работ по стенам (*) — площадь стен. Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
 }
 
 function openAnalytics() {
+  analyticsExpanded.clear();
   renderAnalytics();
   document.getElementById('analyticsOverlay').classList.add('show');
 }
 
 function closeAnalytics() {
   document.getElementById('analyticsOverlay').classList.remove('show');
+}
+
+function handleAnalyticsBodyClick(e) {
+  const row = e.target.closest('.analytics-row');
+  if (!row) return;
+  const wid = row.dataset.wid;
+  if (analyticsExpanded.has(wid)) analyticsExpanded.delete(wid); else analyticsExpanded.add(wid);
+  renderAnalytics();
 }
 
 // ============================================================================
@@ -1746,6 +1785,7 @@ function bindUI() {
   document.getElementById('analyticsOverlay').addEventListener('click', e => {
     if (e.target.id === 'analyticsOverlay') closeAnalytics();
   });
+  document.getElementById('analyticsBody').addEventListener('click', handleAnalyticsBodyClick);
   document.getElementById('changelogOverlay').addEventListener('click', e => {
     if (e.target.id === 'changelogOverlay') closeChangelog();
   });
