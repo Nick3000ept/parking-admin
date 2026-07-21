@@ -334,12 +334,6 @@ body.has-selection { padding-bottom: 100px; }
 .analytics-head .popup-close { color: #9CA3AF; }
 .analytics-head .popup-close:hover { color: #fff; }
 .analytics-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 13px; }
-.analytics-summary {
-  font-size: 14px; color: #111827; margin-bottom: 14px; padding-bottom: 12px;
-  border-bottom: 1px solid #E5E7EB;
-}
-.analytics-summary b { font-weight: 700; }
-.analytics-summary-pct { color: #6B7280; font-size: 12px; }
 .analytics-pivot-wrap { overflow-x: auto; }
 .analytics-pivot { width: 100%; border-collapse: collapse; font-size: 12px; }
 .analytics-pivot th {
@@ -366,9 +360,6 @@ body.has-selection { padding-bottom: 100px; }
   color: #6B7280; font-size: 11.5px; border-bottom: 1px dashed #F3F4F6;
 }
 .analytics-pivot tr.analytics-subrow td:first-child { padding-left: 26px; }
-.analytics-pivot tr.analytics-total-row td {
-  font-weight: 700; color: #111827; border-top: 2px solid #E5E7EB; border-bottom: none;
-}
 .analytics-note { color: #9CA3AF; font-size: 11px; margin-top: 10px; line-height: 1.4; }
 .analytics-empty { color: #6B7280; padding: 30px 0; text-align: center; }
 .popup-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
@@ -1552,15 +1543,15 @@ function monthShortLabel(ym) {
   return (MONTH_SHORT_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1].slice(2);
 }
 
-// Считает по всем отметкам с датой: работа -> месяц -> {count, area}, и работа -> подрядчик -> месяц -> {count, area}.
-// Для дверей показываем count (штуки), для остальных работ — area (м²).
+// Считает по всем назначенным работам (есть СП): работа -> {assignedTotal, doneTotal, months (только выполненные)},
+// и то же самое в разбивке по подрядчику. Для дверей метрика — count (штуки), для остальных работ — area (м²).
 // Объёмы по всем подрядчикам видны любой роли. Если admin/viewer выбрал
 // подрядчика в фильтрах — считаем только его.
 function buildAnalyticsPivot() {
   const user = state.data.user;
   const contractorFilter = (user.isAdmin || user.isViewer) ? state.filters.contractor : '';
   const monthsSet = new Set();
-  const workMap = new Map(); // id_raboty -> { months: Map(ym->{count,area}), total:{count,area}, byContractor: Map(sp->{months, total}) }
+  const workMap = new Map(); // id_raboty -> { months: Map(ym->{count,area}), doneTotal, assignedTotal, byContractor: Map(sp->{months, doneTotal, assignedTotal}) }
 
   const addTo = (bucket, key, area) => {
     let x = bucket.get(key);
@@ -1568,8 +1559,8 @@ function buildAnalyticsPivot() {
     x.count += 1;
     x.area += area;
   };
-
-  let totalAssigned = 0, totalDone = 0;
+  const addSum = (sum, area) => { sum.count += 1; sum.area += area; };
+  const newSum = () => ({ count: 0, area: 0 });
 
   state.data.rooms.forEach(room => {
     const assignments = state.data.assignments[room.num] || {};
@@ -1577,31 +1568,28 @@ function buildAnalyticsPivot() {
       const a = assignments[wid];
       if (!a || !a.sp) continue; // применимость работы к помещению = есть СП
       if (contractorFilter && a.sp !== contractorFilter) continue;
-      totalAssigned += 1;
-      if (a.date) totalDone += 1;
+      const area = roomAreaFor(room, wid);
+
+      let w = workMap.get(wid);
+      if (!w) { w = { months: new Map(), doneTotal: newSum(), assignedTotal: newSum(), byContractor: new Map() }; workMap.set(wid, w); }
+      addSum(w.assignedTotal, area);
+
+      let c = w.byContractor.get(a.sp);
+      if (!c) { c = { months: new Map(), doneTotal: newSum(), assignedTotal: newSum() }; w.byContractor.set(a.sp, c); }
+      addSum(c.assignedTotal, area);
 
       if (!a.date) continue;
       const ym = String(a.date).slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
       monthsSet.add(ym);
-      const area = roomAreaFor(room, wid);
-
-      let w = workMap.get(wid);
-      if (!w) { w = { months: new Map(), total: { count: 0, area: 0 }, byContractor: new Map() }; workMap.set(wid, w); }
       addTo(w.months, ym, area);
-      w.total.count += 1;
-      w.total.area += area;
-
-      const spName = a.sp || '—';
-      let c = w.byContractor.get(spName);
-      if (!c) { c = { months: new Map(), total: { count: 0, area: 0 } }; w.byContractor.set(spName, c); }
+      addSum(w.doneTotal, area);
       addTo(c.months, ym, area);
-      c.total.count += 1;
-      c.total.area += area;
+      addSum(c.doneTotal, area);
     }
   });
 
-  return { months: Array.from(monthsSet).sort(), workMap, contractorFilter, totalAssigned, totalDone };
+  return { months: Array.from(monthsSet).sort(), workMap, contractorFilter };
 }
 
 function renderAnalytics() {
@@ -1610,25 +1598,17 @@ function renderAnalytics() {
   const scope = data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики';
   document.getElementById('analyticsSubtitle').textContent = 'Объёмы по работам и месяцам · ' + scope;
 
-  const percent = data.totalAssigned ? Math.round(data.totalDone / data.totalAssigned * 100) : 0;
-  const summaryHtml = `<div class="analytics-summary">
-    Общий объём работ: <b>${fmtInt(data.totalDone)}</b> из <b>${fmtInt(data.totalAssigned)}</b> готово
-    <span class="analytics-summary-pct">(${percent}%)</span>
-  </div>`;
-
   const body = document.getElementById('analyticsBody');
   if (data.workMap.size === 0) {
-    body.innerHTML = summaryHtml + '<div class="analytics-empty">Пока нет выполненных работ с датами.</div>';
+    body.innerHTML = '<div class="analytics-empty">Пока нет назначенных работ.</div>';
     return;
   }
 
   const months = data.months;
   const head = '<th>Вид работ</th><th class="unit">Ед. изм.</th>' +
-    months.map(ym => `<th class="num">${escapeHtml(monthShortLabel(ym))}</th>`).join('') + '<th class="num">Итого</th>';
+    months.map(ym => `<th class="num">${escapeHtml(monthShortLabel(ym))}</th>`).join('') + '<th class="num">Готово</th><th class="num">Всего</th>';
 
   let rows = '';
-  const grandTotals = months.map(() => 0);
-  let grandTotal = 0;
 
   state.data.works.forEach(w => {
     const x = data.workMap.get(w.id_raboty);
@@ -1637,11 +1617,6 @@ function renderAnalytics() {
     const isDoor = isDoorWork(w.id_raboty);
     const unit = isDoor ? 'шт' : (isWallWork(w.id_raboty) ? 'м² стен' : 'м² пола');
     const metric = (bucket) => isDoor ? bucket.count : bucket.area;
-    // Двери — в штуках, остальные работы — в м²: в общий итог (только м²) двери не суммируем.
-    if (!isDoor) {
-      months.forEach((ym, i) => { const b = x.months.get(ym); grandTotals[i] += b ? b.area : 0; });
-      grandTotal += x.total.area;
-    }
 
     const cells = months.map(ym => {
       const b = x.months.get(ym);
@@ -1653,11 +1628,12 @@ function renderAnalytics() {
       <td><span class="analytics-arrow">▸</span>${escapeHtml(w.full_name)}</td>
       <td class="unit">${unit}</td>
       ${cells}
-      <td class="num analytics-total-col">${fmtInt(metric(x.total))}</td>
+      <td class="num analytics-total-col">${fmtInt(metric(x.doneTotal))}</td>
+      <td class="num analytics-total-col">${fmtInt(metric(x.assignedTotal))}</td>
     </tr>`;
 
     if (expanded) {
-      const contractors = Array.from(x.byContractor.keys()).sort((a, b) => metric(x.byContractor.get(b).total) - metric(x.byContractor.get(a).total));
+      const contractors = Array.from(x.byContractor.keys()).sort((a, b) => metric(x.byContractor.get(b).assignedTotal) - metric(x.byContractor.get(a).assignedTotal));
       contractors.forEach(sp => {
         const c = x.byContractor.get(sp);
         const subCells = months.map(ym => {
@@ -1669,20 +1645,18 @@ function renderAnalytics() {
           <td>${escapeHtml(sp)}</td>
           <td class="unit"></td>
           ${subCells}
-          <td class="num">${fmtInt(metric(c.total))}</td>
+          <td class="num">${fmtInt(metric(c.doneTotal))}</td>
+          <td class="num">${fmtInt(metric(c.assignedTotal))}</td>
         </tr>`;
       });
     }
   });
 
-  const totalCells = grandTotals.map(v => `<td class="num">${v ? fmtInt(v) : '—'}</td>`).join('');
-  rows += `<tr class="analytics-total-row"><td>Итого</td><td class="unit">м²</td>${totalCells}<td class="num">${fmtInt(grandTotal)}</td></tr>`;
-
-  body.innerHTML = summaryHtml + `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
+  body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="analytics-note">Двери считаются в штуках и не входят в строку «Итого» (там сумма по м²). Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
+    <div class="analytics-note">«Готово» — выполнено (по датам, в единице измерения строки), «Всего» — назначено всего по этой работе. Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
 }
 
 function openAnalytics() {
