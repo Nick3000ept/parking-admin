@@ -1543,6 +1543,17 @@ function monthShortLabel(ym) {
   return (MONTH_SHORT_RU[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1].slice(2);
 }
 
+// Дата отметки -> 'yyyy-MM'. В листе даты живут в двух видах: настоящая дата
+// (бэк отдаёт 'yyyy-MM-dd') и текст 'дд.мм.гггг' (внесены вручную). null — не разобрать.
+function dateToYm(dateStr) {
+  const s = String(dateStr).trim();
+  let m = /^(\d{4})-(\d{2})/.exec(s);
+  if (m) return m[1] + '-' + m[2];
+  m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(s);
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2);
+  return null;
+}
+
 // Считает по всем назначенным работам (есть СП): работа -> {assignedTotal, doneTotal, months (только выполненные)},
 // и то же самое в разбивке по подрядчику. Для дверей метрика — count (штуки), для остальных работ — area (м²).
 // Объёмы по всем подрядчикам видны любой роли. Если admin/viewer выбрал
@@ -1579,13 +1590,15 @@ function buildAnalyticsPivot() {
       addSum(c.assignedTotal, area);
 
       if (!a.date) continue;
-      const ym = String(a.date).slice(0, 7);
-      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      // «Готово» — любая непустая дата (как в счётчиках шапки);
+      // в колонку месяца попадает, только если дату удалось разобрать.
+      addSum(w.doneTotal, area);
+      addSum(c.doneTotal, area);
+      const ym = dateToYm(a.date);
+      if (!ym) continue;
       monthsSet.add(ym);
       addTo(w.months, ym, area);
-      addSum(w.doneTotal, area);
       addTo(c.months, ym, area);
-      addSum(c.doneTotal, area);
     }
   });
 
