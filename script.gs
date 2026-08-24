@@ -61,10 +61,18 @@ const CONFIG = {
 // без учёта регистра). Используются только при первичном наполнении листа
 // setupEquip; дальше источник правды — сами строки листа, админ может
 // добавлять строки для любых помещений и работ вручную.
+// Подстроки сравниваются с наименованием в нижнем регистре и с ё→е.
+// Порядок важен: первое совпадение выигрывает.
 const EQUIP_WORKSETS = [
   { match: 'электрощитов', works: ['Монтаж кабеля', 'Монтаж оборудования', 'Расключение', 'Монтаж шинопровода', 'ПНР'] },
   { match: 'кроссов',      works: ['Заказ оборудования', 'Монтаж лотка', 'Монтаж кабеля', 'Монтаж оборудования', 'Расключение'] },
-  { match: 'венткамера',   works: ['Монтаж оборудования', 'Монтаж воздуховодов'] }
+  { match: 'венткамера',   works: ['Монтаж оборудования', 'Монтаж воздуховодов'] },
+  { match: 'итп',          works: ['Монтаж гребенки', 'Разводка трубопроводов'] },
+  { match: 'цтп',          works: ['Монтаж оборудования', 'Разводка трубопроводов', 'Монтаж УКУТ'] },
+  { match: 'узел учета',   works: ['Монтаж УУ', 'Монтаж трубопроводов'] },
+  { match: 'кнс',          works: ['Монтаж оборудования', 'Монтаж трубопроводов'] },
+  { match: 'насосная',     works: ['Монтаж оборудования', 'Монтаж трубопроводов'] },
+  { match: 'тп-',          works: ['Монтаж оборудования', 'Расключение оборудования'] }
 ];
 
 const EQUIP_STATUSES = ['Не начато', 'В работе', 'Готово'];
@@ -898,20 +906,20 @@ function setupEquipSheet(user) {
   withLock_(function () {
     const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
     var sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
+    var existingSheet = null; // лист новой структуры — дозаполним недостающие строки
     if (sheet) {
       const e1 = String(sheet.getRange(1, CONFIG.EQUIP_COL_WORK).getValue() || '').trim();
       if (e1 === 'Работа') {
-        result.note = 'already_exists';
-        result.rows = Math.max(0, sheet.getLastRow() - 1);
-        return;
+        existingSheet = sheet;
+      } else {
+        // Старая структура — в архив (не удаляем данные)
+        var archName = CONFIG.SHEET_EQUIP + '_архив';
+        if (ss.getSheetByName(archName)) {
+          archName += '_' + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd_HHmmss');
+        }
+        sheet.setName(archName);
+        result.archived = archName;
       }
-      // Старая структура — в архив (не удаляем данные)
-      var archName = CONFIG.SHEET_EQUIP + '_архив';
-      if (ss.getSheetByName(archName)) {
-        archName += '_' + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd_HHmmss');
-      }
-      sheet.setName(archName);
-      result.archived = archName;
     }
 
     // Тип помещения -> группа панели
@@ -936,7 +944,7 @@ function setupEquipSheet(user) {
       if (panelByName[name] !== CONFIG.EQUIP_PANEL) continue;
 
       var workset = null;
-      const nameLow = name.toLowerCase();
+      const nameLow = name.toLowerCase().replace(/ё/g, 'е');
       for (var w = 0; w < EQUIP_WORKSETS.length; w++) {
         if (nameLow.indexOf(EQUIP_WORKSETS[w].match) !== -1) { workset = EQUIP_WORKSETS[w]; break; }
       }
@@ -957,6 +965,41 @@ function setupEquipSheet(user) {
     }
     if (rows.length === 0) throw new Error('Не найдено помещений под наборы работ');
 
+    const pctRule = SpreadsheetApp.newDataValidation()
+      .requireNumberBetween(0, 100).setAllowInvalid(false).build();
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(EQUIP_STATUSES, true).setAllowInvalid(false).build();
+
+    if (existingSheet) {
+      // Дозаполнение: добавляем в конец только пары (помещение, работа),
+      // которых ещё нет. Существующие строки (проценты, подрядчиков) не трогаем.
+      sheet = existingSheet;
+      const existingPairs = {};
+      if (sheet.getLastRow() > 1) {
+        const cur = sheet.getRange(2, 1, sheet.getLastRow() - 1, CONFIG.EQUIP_COL_WORK).getValues();
+        for (var c = 0; c < cur.length; c++) {
+          existingPairs[String(cur[c][CONFIG.EQUIP_COL_NUM - 1] || '').trim() + '|' +
+            String(cur[c][CONFIG.EQUIP_COL_WORK - 1] || '').trim()] = true;
+        }
+      }
+      const toAdd = [];
+      for (var a = 0; a < rows.length; a++) {
+        if (!existingPairs[String(rows[a][0]).trim() + '|' + String(rows[a][4]).trim()]) toAdd.push(rows[a]);
+      }
+      if (toAdd.length === 0) {
+        result.note = 'up_to_date';
+        result.rows = Math.max(0, sheet.getLastRow() - 1);
+        return;
+      }
+      const startRow = sheet.getLastRow() + 1;
+      sheet.getRange(startRow, 1, toAdd.length, toAdd[0].length).setValues(toAdd);
+      sheet.getRange(startRow, CONFIG.EQUIP_COL_PCT, toAdd.length, 1).setDataValidation(pctRule);
+      sheet.getRange(startRow, CONFIG.EQUIP_COL_STATUS, toAdd.length, 1).setDataValidation(statusRule);
+      result.added = toAdd.length;
+      result.rows = sheet.getLastRow() - 1;
+      return;
+    }
+
     const headers = [
       'Номер помещения', 'Корпус', 'Этаж', 'Наименование',
       'Работа', 'Подрядчик', '% готовности', 'Статус', 'Обновлено'
@@ -965,12 +1008,6 @@ function setupEquipSheet(user) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
     sheet.setFrozenRows(1);
-
-    // Ограничение процентов 0..100 и выпадающий список статусов
-    const pctRule = SpreadsheetApp.newDataValidation()
-      .requireNumberBetween(0, 100).setAllowInvalid(false).build();
-    const statusRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(EQUIP_STATUSES, true).setAllowInvalid(false).build();
     sheet.getRange(2, CONFIG.EQUIP_COL_PCT, rows.length, 1).setDataValidation(pctRule);
     sheet.getRange(2, CONFIG.EQUIP_COL_STATUS, rows.length, 1).setDataValidation(statusRule);
     sheet.autoResizeColumns(1, headers.length);
