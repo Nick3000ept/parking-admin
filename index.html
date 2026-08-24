@@ -395,6 +395,29 @@ body.has-selection { padding-bottom: 100px; }
 .popup-work-row .work-name { font-weight: 500; font-size: 14px; }
 .popup-work-row .work-meta { font-size: 12px; color: #6B7280; margin-top: 2px; }
 
+/* ===== POPUP: монтаж оборудования ===== */
+.equip-sp { font-size: 12px; color: #6B7280; margin-bottom: 8px; }
+.equip-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 6px; background: #F9FAFB; margin-bottom: 6px;
+}
+.equip-row.st-done { background: #D1FAE5; }
+.equip-row.st-progress { background: #FEF3C7; }
+.equip-row .equip-name { flex: 1; font-weight: 500; font-size: 14px; }
+.equip-row select.equip-status {
+  font-size: 13px; padding: 4px 6px; border: 1px solid #D1D5DB; border-radius: 5px;
+  background: #fff; color: #1F2937;
+}
+.equip-row input.equip-pct {
+  width: 54px; font-size: 13px; padding: 4px 6px; border: 1px solid #D1D5DB;
+  border-radius: 5px; text-align: right;
+}
+.equip-row select:disabled, .equip-row input:disabled {
+  background: transparent; border-color: transparent; color: #374151;
+  -webkit-appearance: none; appearance: none; opacity: 1;
+}
+.equip-upd { font-size: 11px; color: #9CA3AF; margin-top: 6px; }
+
 /* ===== STATES ===== */
 .state-screen {
   position: fixed; inset: 0; background: #F3F4F6;
@@ -741,7 +764,7 @@ function renderApp() {
     const hasAny = state.data.rooms.some(r => {
       const a = state.data.assignments[r.num] || {};
       return Object.values(a).some(x => x.sp === state.data.user.name);
-    });
+    }) || Object.values(state.data.equip || {}).some(e => e.sp === state.data.user.name);
     if (!hasAny) {
       document.getElementById('stateEmpty').classList.add('show');
       return;
@@ -1722,6 +1745,37 @@ function renderPopup(room) {
   // Only works that have assignments
   const assignedWorks = works.filter(w => assignments[w.id_raboty] && assignments[w.id_raboty].sp);
 
+  // Блок «Монтаж оборудования» — только у помещений из листа Монтаж_оборудования
+  const equipEntry = state.data.equip ? state.data.equip[room.num] : null;
+  let equipHtml = '';
+  if (equipEntry) {
+    const canEditEquip = !isViewer && (isAdmin || equipEntry.sp === userName);
+    const positions = state.data.equip_positions || EQUIP_POSITIONS_FALLBACK;
+    equipHtml = `
+      <div class="popup-works">
+        <h3>Монтаж оборудования</h3>
+        <div class="equip-sp">${equipEntry.sp ? 'Подрядчик: ' + escapeHtml(equipEntry.sp) : 'Подрядчик не назначен'}</div>
+        ${positions.map(p => {
+          const st = (equipEntry.pos && equipEntry.pos[p.id]) || { status: 'Не начато', pct: 0 };
+          const stClass = st.status === 'Готово' ? 'st-done' : (st.status === 'В работе' ? 'st-progress' : '');
+          const pctEditable = canEditEquip && st.status === 'В работе';
+          return `
+            <div class="equip-row ${stClass}" data-pos="${p.id}">
+              <div class="equip-name">${escapeHtml(p.name)}</div>
+              <select class="equip-status" ${canEditEquip ? '' : 'disabled'}>
+                ${EQUIP_STATUS_LIST.map(s => `<option value="${s}" ${s === st.status ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+              <input class="equip-pct" type="number" min="0" max="100" step="5"
+                value="${st.pct}" ${pctEditable ? '' : 'disabled'}>
+              <span>%</span>
+            </div>
+          `;
+        }).join('')}
+        ${equipEntry.upd ? `<div class="equip-upd">Обновлено: ${escapeHtml(equipEntry.upd)}</div>` : ''}
+      </div>
+    `;
+  }
+
   const popupHtml = `
     <div class="popup-header">
       <div>
@@ -1757,6 +1811,7 @@ function renderPopup(room) {
         `;
       }).join('')}
     </div>
+    ${equipHtml}
   `;
 
   const popup = document.getElementById('popup');
@@ -1771,6 +1826,85 @@ function renderPopup(room) {
       if (a.date) clearMark(room.num, wid);
       else setMark(room.num, wid);
     });
+  });
+
+  // Bind: монтаж оборудования (статус + процент)
+  popup.querySelectorAll('.equip-row').forEach(rowEl => {
+    const posId = rowEl.dataset.pos;
+    const sel = rowEl.querySelector('.equip-status');
+    const pctInput = rowEl.querySelector('.equip-pct');
+    if (sel && !sel.disabled) {
+      sel.addEventListener('change', () => {
+        const status = sel.value;
+        const cur = equipEntry.pos[posId] || { pct: 0 };
+        // «Готово» — всегда 100, «Не начато» — 0, «В работе» — процент остаётся
+        const pct = status === 'Готово' ? 100 : (status === 'Не начато' ? 0 : cur.pct);
+        changeEquip(room.num, posId, status, pct);
+      });
+    }
+    if (pctInput && !pctInput.disabled) {
+      pctInput.addEventListener('change', () => {
+        let pct = Math.round(Number(pctInput.value));
+        if (isNaN(pct) || pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        const cur = equipEntry.pos[posId] || { status: 'В работе' };
+        changeEquip(room.num, posId, cur.status, pct);
+      });
+    }
+  });
+}
+
+// ============================================================================
+// Монтаж оборудования: optimistic-запись статуса/процента
+// ============================================================================
+const EQUIP_POSITIONS_FALLBACK = [
+  { id: 'supply',  name: 'Поставка оборудования' },
+  { id: 'montazh', name: 'Монтаж оборудования' },
+  { id: 'raskl',   name: 'Расключение оборудования' },
+  { id: 'pnr',     name: 'ПНР' }
+];
+const EQUIP_STATUS_LIST = ['Не начато', 'В работе', 'Готово'];
+
+// Защита от гонки ответов при быстрых изменениях одной позиции
+const equipSeq = {};
+function nextEquipSeq(num, posId) {
+  const k = num + '|' + posId;
+  equipSeq[k] = (equipSeq[k] || 0) + 1;
+  return equipSeq[k];
+}
+function equipSeqStale(num, posId, mySeq) {
+  return equipSeq[num + '|' + posId] !== mySeq;
+}
+
+function changeEquip(num, posId, status, pct) {
+  const entry = state.data.equip && state.data.equip[num];
+  if (!entry) return;
+  if (!entry.pos[posId]) entry.pos[posId] = { status: 'Не начато', pct: 0 };
+  const p = entry.pos[posId];
+  const prev = { status: p.status, pct: p.pct };
+
+  // Сразу в интерфейс, запрос фоном, при ошибке — откат
+  p.status = status;
+  p.pct = pct;
+  refreshPopupIfOpen(num);
+  saveCache();
+
+  const mySeq = nextEquipSeq(num, posId);
+  postAction('setEquip', { num: num, pos: posId, status: status, pct: pct }).then(res => {
+    if (equipSeqStale(num, posId, mySeq)) return;
+    if (!res || !res.ok) {
+      p.status = prev.status;
+      p.pct = prev.pct;
+      refreshPopupIfOpen(num);
+      saveCache();
+      toast('Не сохранилось: ' + ((res && res.error) || 'нет сети'), true);
+      return;
+    }
+    p.status = res.status;
+    p.pct = res.pct;
+    if (res.updated) entry.upd = res.updated;
+    refreshPopupIfOpen(num);
+    saveCache();
   });
 }
 

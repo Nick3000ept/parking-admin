@@ -14,6 +14,7 @@ const CONFIG = {
   SHEET_PODRYADCHIKI: 'Ведомость_подрядчиков',
   SHEET_TIPY: 'Типы_помещений',
   SHEET_LOG: 'Лог_входов',
+  SHEET_EQUIP: 'Монтаж_оборудования',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -32,12 +33,36 @@ const CONFIG = {
   COL_COMMENT: 11,
   COL_KS: 12,
 
+  // Колонки листа Монтаж_оборудования (1-based).
+  // A–E — справочная часть (сайт не пишет), F–M — статусы/проценты, N — журнал.
+  EQUIP_COL_NUM: 1,
+  EQUIP_COL_KORP: 2,
+  EQUIP_COL_FLOOR: 3,
+  EQUIP_COL_NAME: 4,
+  EQUIP_COL_SP: 5,
+  EQUIP_FIRST_WRITE_COL: 6,
+  EQUIP_LAST_WRITE_COL: 13,
+  EQUIP_COL_UPDATED: 14,
+  // Помещения какой группы панели попадают в лист при setupEquip
+  EQUIP_PANEL: 'Тех помещения',
+
   TIMEZONE: 'Europe/Moscow',
   LOCK_TIMEOUT_MS: 30000,
 
   ADMIN_ID: 'admin',
   VIEWER_ID: 'viewer'
 };
+
+// Позиции монтажа оборудования: id — в протоколе фронт↔бэк, name — заголовок
+// для людей, colStatus/colPct — колонки листа Монтаж_оборудования.
+const EQUIP_POSITIONS = [
+  { id: 'supply',  name: 'Поставка оборудования',    colStatus: 6,  colPct: 7 },
+  { id: 'montazh', name: 'Монтаж оборудования',      colStatus: 8,  colPct: 9 },
+  { id: 'raskl',   name: 'Расключение оборудования', colStatus: 10, colPct: 11 },
+  { id: 'pnr',     name: 'ПНР',                      colStatus: 12, colPct: 13 }
+];
+
+const EQUIP_STATUSES = ['Не начато', 'В работе', 'Готово'];
 
 // =============================================================================
 // Entry points
@@ -61,6 +86,10 @@ function doGet(e) {
     if (action === 'load') {
       logLogin_(user, params.ua || '');
       return jsonResponse(loadSnapshot(user));
+    }
+
+    if (action === 'setupEquip') {
+      return jsonResponse(setupEquipSheet(user));
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
@@ -87,6 +116,9 @@ function doPost(e) {
     }
     if (body.action === 'setMarks') {
       return jsonResponse(setMarks(user, body.marks));
+    }
+    if (body.action === 'setEquip') {
+      return jsonResponse(setEquip(user, body.num, body.pos, body.status, body.pct));
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
@@ -172,6 +204,8 @@ function loadSnapshot(user) {
       work_cols: {},
       assignments: {},
       tip_panels: collectUniquePanels(tipyMap),
+      equip: {},
+      equip_positions: equipPositionsPublic_(),
       server_time: now()
     };
   }
@@ -258,9 +292,60 @@ function loadSnapshot(user) {
     work_cols: workColMap,
     assignments: assignments,
     tip_panels: collectUniquePanels(tipyMap),
+    equip: loadEquip_(ss),
+    equip_positions: equipPositionsPublic_(),
     server_time: now(),
     version_hash: computeVersionHash(headers, works.length, Object.keys(tipyMap).length)
   };
+}
+
+/** id+name позиций для фронта (без номеров колонок). */
+function equipPositionsPublic_() {
+  const out = [];
+  for (var i = 0; i < EQUIP_POSITIONS.length; i++) {
+    out.push({ id: EQUIP_POSITIONS[i].id, name: EQUIP_POSITIONS[i].name });
+  }
+  return out;
+}
+
+/**
+ * Читает лист Монтаж_оборудования в map: номер помещения ->
+ * { row, sp, upd, pos: { supply: {status, pct}, ... } }.
+ * Листа нет — возвращает пустой map (фронт просто не покажет блок).
+ */
+function loadEquip_(ss) {
+  const equip = {};
+  const sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
+  if (!sheet || sheet.getLastRow() < 2) return equip;
+
+  const data = sheet.getRange(1, 1, sheet.getLastRow(), CONFIG.EQUIP_COL_UPDATED).getValues();
+  for (var i = 1; i < data.length; i++) {
+    const num = String(data[i][CONFIG.EQUIP_COL_NUM - 1] || '').trim();
+    if (!num) continue;
+    const pos = {};
+    for (var p = 0; p < EQUIP_POSITIONS.length; p++) {
+      const def = EQUIP_POSITIONS[p];
+      pos[def.id] = {
+        status: String(data[i][def.colStatus - 1] || '').trim() || 'Не начато',
+        pct: normalizePct_(data[i][def.colPct - 1])
+      };
+    }
+    equip[num] = {
+      row: i + 1,
+      sp: String(data[i][CONFIG.EQUIP_COL_SP - 1] || '').trim(),
+      upd: String(data[i][CONFIG.EQUIP_COL_UPDATED - 1] || ''),
+      pos: pos
+    };
+  }
+  return equip;
+}
+
+/** Процент из ячейки -> целое 0..100. Пустое/мусор -> 0. */
+function normalizePct_(v) {
+  var n = Math.round(Number(v));
+  if (isNaN(n) || n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
 }
 
 function collectUniquePanels(tipyMap) {
@@ -500,6 +585,69 @@ function setMarks(user, marks) {
   });
 
   return { ok: true, results: results };
+}
+
+/**
+ * Запись факта по монтажу оборудования: статус + процент одной позиции
+ * (поставка/монтаж/расключение/ПНР) в листе Монтаж_оборудования.
+ *
+ * Права: Админ — любое помещение; подрядчик — только помещения, где он вписан
+ * в колонку «Подрядчик» этого листа; Наблюдатель — нет.
+ * Защита от сдвижки строк: строка ищется по номеру помещения при каждом запросе.
+ * Согласованность: «Готово» — всегда 100%, «Не начато» — всегда 0%.
+ */
+function setEquip(user, num, posId, status, pct) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+
+  var pos = null;
+  for (var i = 0; i < EQUIP_POSITIONS.length; i++) {
+    if (EQUIP_POSITIONS[i].id === String(posId)) { pos = EQUIP_POSITIONS[i]; break; }
+  }
+  if (!pos) return { ok: false, error: 'Неизвестная позиция: ' + posId };
+
+  const statusStr = String(status || '').trim();
+  if (EQUIP_STATUSES.indexOf(statusStr) === -1) {
+    return { ok: false, error: 'Недопустимый статус: ' + status };
+  }
+  var pctNum = normalizePct_(pct);
+  if (statusStr === 'Готово') pctNum = 100;
+  if (statusStr === 'Не начато') pctNum = 0;
+
+  // Страховка: пишем только в колонки статусов/процентов, не в справочную часть
+  if (pos.colStatus < CONFIG.EQUIP_FIRST_WRITE_COL || pos.colPct > CONFIG.EQUIP_LAST_WRITE_COL) {
+    throw new Error('Запись вне разрешённых колонок листа ' + CONFIG.SHEET_EQUIP);
+  }
+
+  const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
+  if (!sheet) return { ok: false, error: 'Лист "' + CONFIG.SHEET_EQUIP + '" не найден' };
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: false, error: 'Лист "' + CONFIG.SHEET_EQUIP + '" пуст' };
+
+  const refData = sheet.getRange(2, 1, lastRow - 1, CONFIG.EQUIP_COL_SP).getValues();
+  var row = null;
+  var sp = '';
+  for (var k = 0; k < refData.length; k++) {
+    if (String(refData[k][CONFIG.EQUIP_COL_NUM - 1] || '').trim() === String(num).trim()) {
+      row = k + 2;
+      sp = String(refData[k][CONFIG.EQUIP_COL_SP - 1] || '').trim();
+      break;
+    }
+  }
+  if (!row) return { ok: false, error: 'Помещение не найдено в листе монтажа: ' + num };
+
+  if (!user.isAdmin && sp !== user.name) {
+    return { ok: false, error: 'Монтаж оборудования в этом помещении не назначен вам' };
+  }
+
+  const updated = now() + ' ' + user.name + ' (' + pos.name + ')';
+  withLock_(function () {
+    const sh = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
+    sh.getRange(row, pos.colStatus).setValue(statusStr);
+    sh.getRange(row, pos.colPct).setValue(pctNum);
+    sh.getRange(row, CONFIG.EQUIP_COL_UPDATED).setValue(updated);
+  });
+
+  return { ok: true, num: num, pos: pos.id, status: statusStr, pct: pctNum, updated: updated };
 }
 
 /** A1-адрес ячейки по (row, col) 1-based — для getRangeList. */
@@ -749,6 +897,96 @@ function setupAll() {
   const summary = report.join('\n\n');
   Logger.log(summary);
   return summary;
+}
+
+/**
+ * Создаёт лист Монтаж_оборудования и наполняет его тех-помещениями из Главного
+ * (те, у кого Тип_помещения_панель = CONFIG.EQUIP_PANEL). Идемпотентно: если
+ * лист уже существует — ничего не меняет. Существующие листы не трогает.
+ *
+ * Вызывается через ?action=setupEquip&token=... (любой активный пользователь,
+ * кроме Наблюдателя) или вручную из редактора: setupEquipSheetManual.
+ */
+function setupEquipSheet(user) {
+  if (user && user.isViewer) {
+    return { ok: false, error: 'У роли «Наблюдатель» нет прав на настройку' };
+  }
+  const result = { ok: true };
+  withLock_(function () {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
+    if (sheet) {
+      result.note = 'already_exists';
+      result.rows = Math.max(0, sheet.getLastRow() - 1);
+      return;
+    }
+
+    // Тип помещения -> группа панели
+    const tipySheet = ss.getSheetByName(CONFIG.SHEET_TIPY);
+    if (!tipySheet) throw new Error('Лист "' + CONFIG.SHEET_TIPY + '" не найден');
+    const tipyData = tipySheet.getDataRange().getValues();
+    const panelByName = {};
+    for (var i = 1; i < tipyData.length; i++) {
+      if (tipyData[i][0]) panelByName[String(tipyData[i][0]).trim()] = String(tipyData[i][1] || '').trim();
+    }
+
+    // Тех-помещения из Главного, в реестровом порядке
+    const glSheet = ss.getSheetByName(CONFIG.SHEET_GLAVNY);
+    if (!glSheet) throw new Error('Лист "' + CONFIG.SHEET_GLAVNY + '" не найден');
+    const glData = glSheet.getDataRange().getValues();
+    const rows = [];
+    for (var r = 1; r < glData.length; r++) {
+      const num = String(glData[r][CONFIG.COL_NUM - 1] || '').trim();
+      if (!num) continue;
+      const name = String(glData[r][CONFIG.COL_NAME - 1] || '').trim();
+      if (panelByName[name] !== CONFIG.EQUIP_PANEL) continue;
+      rows.push([
+        num,
+        String(glData[r][CONFIG.COL_KORP - 1] || ''),
+        String(glData[r][CONFIG.COL_FLOOR - 1] || ''),
+        name,
+        '', // Подрядчик — заполняет админ в таблице
+        'Не начато', 0, 'Не начато', 0, 'Не начато', 0, 'Не начато', 0,
+        '' // Обновлено
+      ]);
+    }
+    if (rows.length === 0) throw new Error('Не найдено помещений группы "' + CONFIG.EQUIP_PANEL + '"');
+
+    const headers = [
+      'Номер помещения', 'Корпус', 'Этаж', 'Наименование', 'Подрядчик',
+      'Поставка — статус', 'Поставка — %',
+      'Монтаж — статус', 'Монтаж — %',
+      'Расключение — статус', 'Расключение — %',
+      'ПНР — статус', 'ПНР — %',
+      'Обновлено'
+    ];
+    sheet = ss.insertSheet(CONFIG.SHEET_EQUIP);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    sheet.setFrozenRows(1);
+
+    // Выпадающие списки статусов и ограничение процентов 0..100
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(EQUIP_STATUSES, true).setAllowInvalid(false).build();
+    const pctRule = SpreadsheetApp.newDataValidation()
+      .requireNumberBetween(0, 100).setAllowInvalid(false).build();
+    for (var p = 0; p < EQUIP_POSITIONS.length; p++) {
+      sheet.getRange(2, EQUIP_POSITIONS[p].colStatus, rows.length, 1).setDataValidation(statusRule);
+      sheet.getRange(2, EQUIP_POSITIONS[p].colPct, rows.length, 1).setDataValidation(pctRule);
+    }
+    sheet.autoResizeColumns(1, headers.length);
+
+    result.created = true;
+    result.rows = rows.length;
+  });
+  return result;
+}
+
+/** Ручной запуск создания листа монтажа из редактора Apps Script. */
+function setupEquipSheetManual() {
+  const res = setupEquipSheet(null);
+  Logger.log(JSON.stringify(res));
+  return res;
 }
 
 /**
