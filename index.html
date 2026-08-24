@@ -462,6 +462,14 @@ body.has-selection { padding-bottom: 100px; }
 }
 .equip-upd { font-size: 11px; color: #9CA3AF; margin-top: 6px; }
 
+/* Блок «Монтаж оборудования» в аналитике */
+.analytics-equip { margin-bottom: 20px; }
+.analytics-equip h3 {
+  font-size: 13px; margin: 0 0 6px; color: #6B7280;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.analytics-equip .equip-now { font-size: 13px; color: #374151; margin-bottom: 8px; }
+
 /* Комментарий в карточке помещения */
 .popup-comment {
   width: 100%; box-sizing: border-box; resize: vertical;
@@ -1882,9 +1890,12 @@ function renderAnalytics() {
   const scope = data.contractorFilter ? 'Подрядчик: ' + data.contractorFilter : 'Все подрядчики';
   document.getElementById('analyticsSubtitle').textContent = 'Объёмы по работам и месяцам · ' + scope;
 
+  const equipBlockHtml = '<div id="equipStatsBlock" class="analytics-equip"><div class="analytics-empty">Сводка по монтажу оборудования загружается...</div></div>';
+
   const body = document.getElementById('analyticsBody');
   if (data.workMap.size === 0) {
-    body.innerHTML = '<div class="analytics-empty">Пока нет назначенных работ.</div>';
+    body.innerHTML = equipBlockHtml + '<div class="analytics-empty">Пока нет назначенных работ.</div>';
+    fillEquipStats();
     return;
   }
 
@@ -1936,11 +1947,68 @@ function renderAnalytics() {
     }
   });
 
-  body.innerHTML = `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
+  body.innerHTML = equipBlockHtml + `<div class="analytics-pivot-wrap"><table class="analytics-pivot">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     <div class="analytics-note">«Готово» — выполнено (по датам, в единице измерения строки), «Всего» — назначено всего по этой работе. Клик по строке работы разворачивает разбивку по подрядчикам. Помещение попадает в месяц по дате отметки о выполнении. Несохранённые отметки (оранжевые) учитываются как сегодняшние.</div>`;
+  fillEquipStats();
+}
+
+// ============================================================================
+// Сводка по монтажу оборудования (за 7/30 дней) — грузится отдельным запросом
+// и кэшируется на 5 минут, чтобы не дёргать бэк при каждом открытии
+// ============================================================================
+let equipStatsCache = null; // { ts, data }
+
+async function fillEquipStats() {
+  let data = equipStatsCache && (Date.now() - equipStatsCache.ts < 5 * 60 * 1000)
+    ? equipStatsCache.data : null;
+  if (!data) {
+    try {
+      const resp = await fetch(GAS_URL + '?action=equipStats&token=' + encodeURIComponent(state.token));
+      const json = await resp.json();
+      if (json && json.ok) {
+        data = json;
+        equipStatsCache = { ts: Date.now(), data: json };
+      }
+    } catch (e) { /* сеть — покажем заглушку */ }
+  }
+  const el = document.getElementById('equipStatsBlock');
+  if (!el) return; // окно уже закрыто/перерисовано
+  if (!data) {
+    el.innerHTML = '<div class="analytics-empty">Сводка по монтажу оборудования недоступна (нет сети). Откройте аналитику ещё раз.</div>';
+    return;
+  }
+
+  const t = data.totals;
+  const fmtSigned = n => (n > 0 ? '+' : '') + fmtInt(n);
+  const winRow = (label, get) =>
+    `<tr><td>${label}</td><td class="num">${get(data.week)}</td><td class="num">${get(data.month)}</td></tr>`;
+
+  const bw = (data.month && data.month.byWork) || {};
+  const workNames = Object.keys(bw).sort((a, b) => bw[b].delta - bw[a].delta);
+  const byWorkRows = workNames.map(n => {
+    const x = bw[n];
+    return `<tr><td>${escapeHtml(n)}</td><td class="num">${fmtInt(x.positions)}</td><td class="num">${fmtInt(x.completed)}</td><td class="num">${fmtSigned(x.delta)}</td></tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <h3>Монтаж оборудования</h3>
+    <div class="equip-now">Сейчас: позиций ${fmtInt(t.positions)} · готово ${fmtInt(t.done)} · в работе ${fmtInt(t.inProgress)} · не начато ${fmtInt(t.notStarted)}</div>
+    <div class="analytics-pivot-wrap"><table class="analytics-pivot">
+      <thead><tr><th>Показатель</th><th class="num">За 7 дней</th><th class="num">За 30 дней</th></tr></thead>
+      <tbody>
+        ${winRow('Позиций с прогрессом', w => fmtInt(w.positions))}
+        ${winRow('Доведено до 100%', w => fmtInt(w.completed))}
+        ${winRow('Прирост, процент-пункты', w => fmtSigned(w.delta))}
+      </tbody>
+    </table></div>
+    ${workNames.length ? `<div class="analytics-pivot-wrap" style="margin-top:10px"><table class="analytics-pivot">
+      <thead><tr><th>Работа · за 30 дней</th><th class="num">Позиций</th><th class="num">До 100%</th><th class="num">Прирост, п.п.</th></tr></thead>
+      <tbody>${byWorkRows}</tbody>
+    </table></div>` : ''}
+  `;
 }
 
 function openAnalytics() {

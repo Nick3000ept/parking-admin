@@ -16,6 +16,7 @@ const CONFIG = {
   SHEET_LOG: 'Лог_входов',
   SHEET_EQUIP: 'Монтаж_оборудования',
   SHEET_COMMENTS: 'Комментарии_помещений',
+  SHEET_EQUIP_LOG: 'Журнал_монтажа',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -104,6 +105,10 @@ function doGet(e) {
 
     if (action === 'setupEquip') {
       return jsonResponse(setupEquipSheet(user));
+    }
+
+    if (action === 'equipStats') {
+      return jsonResponse(equipStats());
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
@@ -638,14 +643,16 @@ function setEquip(user, num, work, pct) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { ok: false, error: 'Лист "' + CONFIG.SHEET_EQUIP + '" пуст' };
 
-  const refData = sheet.getRange(2, 1, lastRow - 1, CONFIG.EQUIP_COL_SP).getValues();
+  const refData = sheet.getRange(2, 1, lastRow - 1, CONFIG.EQUIP_COL_PCT).getValues();
   var row = null;
   var sp = '';
+  var oldPct = 0;
   for (var k = 0; k < refData.length; k++) {
     if (String(refData[k][CONFIG.EQUIP_COL_NUM - 1] || '').trim() === String(num).trim() &&
         String(refData[k][CONFIG.EQUIP_COL_WORK - 1] || '').trim() === workStr) {
       row = k + 2;
       sp = String(refData[k][CONFIG.EQUIP_COL_SP - 1] || '').trim();
+      oldPct = normalizePct_(refData[k][CONFIG.EQUIP_COL_PCT - 1]);
       break;
     }
   }
@@ -657,10 +664,14 @@ function setEquip(user, num, work, pct) {
 
   const updated = now() + ' ' + user.name;
   withLock_(function () {
-    const sh = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
+    const ssw = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    const sh = ssw.getSheetByName(CONFIG.SHEET_EQUIP);
     sh.getRange(row, CONFIG.EQUIP_COL_PCT).setValue(pctNum);
     sh.getRange(row, CONFIG.EQUIP_COL_STATUS).setValue(statusStr);
     sh.getRange(row, CONFIG.EQUIP_COL_UPDATED).setValue(updated);
+    if (pctNum !== oldPct) {
+      logEquip_(ssw, user, [{ num: String(num).trim(), work: workStr, oldPct: oldPct, newPct: pctNum }]);
+    }
   });
 
   return { ok: true, num: num, work: workStr, status: statusStr, pct: pctNum, updated: updated };
@@ -691,14 +702,18 @@ function setEquipBatch(user, items) {
       return;
     }
 
-    // Одно чтение справочной части: пара (номер, работа) -> строка + подрядчик
-    const refData = sheet.getRange(2, 1, sheet.getLastRow() - 1, CONFIG.EQUIP_COL_SP).getValues();
+    // Одно чтение: пара (номер, работа) -> строка + подрядчик + текущий процент
+    const refData = sheet.getRange(2, 1, sheet.getLastRow() - 1, CONFIG.EQUIP_COL_PCT).getValues();
     const rowByKey = {};
     for (var r = 0; r < refData.length; r++) {
       const key = String(refData[r][CONFIG.EQUIP_COL_NUM - 1] || '').trim() + '|' +
         String(refData[r][CONFIG.EQUIP_COL_WORK - 1] || '').trim();
       if (!(key in rowByKey)) {
-        rowByKey[key] = { row: r + 2, sp: String(refData[r][CONFIG.EQUIP_COL_SP - 1] || '').trim() };
+        rowByKey[key] = {
+          row: r + 2,
+          sp: String(refData[r][CONFIG.EQUIP_COL_SP - 1] || '').trim(),
+          oldPct: normalizePct_(refData[r][CONFIG.EQUIP_COL_PCT - 1])
+        };
       }
     }
 
@@ -727,7 +742,10 @@ function setEquipBatch(user, items) {
       }
       const pctNum = normalizePct_(it.pct);
       const statusStr = pctNum >= 100 ? 'Готово' : (pctNum > 0 ? 'В работе' : 'Не начато');
-      finalByKey[num + '|' + workStr] = { row: rec.row, pctNum: pctNum, statusStr: statusStr };
+      finalByKey[num + '|' + workStr] = {
+        row: rec.row, pctNum: pctNum, statusStr: statusStr,
+        num: num, work: workStr, oldPct: rec.oldPct
+      };
       results[i] = { ok: true, num: num, work: workStr, pct: pctNum, status: statusStr };
     }
 
@@ -749,9 +767,46 @@ function setEquipBatch(user, items) {
       if (statusGroups.hasOwnProperty(s)) sheet.getRangeList(statusGroups[s]).setValue(s);
     }
     if (updCells.length > 0) sheet.getRangeList(updCells).setValue(updated);
+
+    // Журнал изменений — для аналитики «за неделю/месяц»
+    const logEntries = [];
+    for (var lk in finalByKey) {
+      if (!finalByKey.hasOwnProperty(lk)) continue;
+      const lf = finalByKey[lk];
+      if (lf.pctNum !== lf.oldPct) {
+        logEntries.push({ num: lf.num, work: lf.work, oldPct: lf.oldPct, newPct: lf.pctNum });
+      }
+    }
+    logEquip_(SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID), user, logEntries);
   });
 
   return { ok: true, results: results, updated: updated };
+}
+
+/**
+ * Пишет изменения процентов в лист Журнал_монтажа (создаёт при первом вызове).
+ * Колонки: Дата (настоящая дата+время), Номер, Работа, Было %, Стало %, Кто.
+ * Любая ошибка проглатывается — журнал не должен ломать сохранение.
+ */
+function logEquip_(ss, user, entries) {
+  if (!entries || entries.length === 0) return;
+  try {
+    var sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP_LOG);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEET_EQUIP_LOG);
+      sheet.getRange(1, 1, 1, 6).setValues([['Дата', 'Номер помещения', 'Работа', 'Было %', 'Стало %', 'Кто']]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      sheet.getRange('A:A').setNumberFormat('yyyy-mm-dd HH:mm:ss');
+    }
+    const stamp = new Date();
+    const rows = [];
+    for (var i = 0; i < entries.length; i++) {
+      rows.push([stamp, entries[i].num, entries[i].work, entries[i].oldPct, entries[i].newPct, user.name || '']);
+    }
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 6).setValues(rows);
+  } catch (e) {
+    // молчим — журнал вторичен
+  }
 }
 
 /**
@@ -924,6 +979,77 @@ function locateCell(num, idRaboty) {
     spValue: spVal ? String(spVal).trim() : '',
     currentDate: dateStr
   };
+}
+
+/**
+ * Сводка по монтажу оборудования для окна «Аналитика»:
+ * текущий срез листа + прогресс за 7 и 30 дней из Журнала_монтажа.
+ * Доступна любой авторизованной роли (только чтение).
+ */
+function equipStats() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+
+  // Текущий срез
+  const totals = { positions: 0, done: 0, inProgress: 0, notStarted: 0 };
+  const eqSheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
+  if (eqSheet && eqSheet.getLastRow() > 1) {
+    const data = eqSheet.getRange(2, 1, eqSheet.getLastRow() - 1, CONFIG.EQUIP_COL_PCT).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (!String(data[i][CONFIG.EQUIP_COL_NUM - 1] || '').trim()) continue;
+      totals.positions++;
+      const pct = normalizePct_(data[i][CONFIG.EQUIP_COL_PCT - 1]);
+      if (pct >= 100) totals.done++;
+      else if (pct > 0) totals.inProgress++;
+      else totals.notStarted++;
+    }
+  }
+
+  // Прогресс из журнала: окна 7 и 30 дней от текущего момента
+  function emptyWindow() { return { positions: 0, completed: 0, delta: 0, byWork: {} }; }
+  const week = emptyWindow();
+  const month = emptyWindow();
+  const logSheet = ss.getSheetByName(CONFIG.SHEET_EQUIP_LOG);
+  if (logSheet && logSheet.getLastRow() > 1) {
+    const nowMs = Date.now();
+    const weekFrom = nowMs - 7 * 24 * 3600 * 1000;
+    const monthFrom = nowMs - 30 * 24 * 3600 * 1000;
+    const log = logSheet.getRange(2, 1, logSheet.getLastRow() - 1, 6).getValues();
+    const weekSeen = {};
+    const monthSeen = {};
+    for (var r = 0; r < log.length; r++) {
+      const d = log[r][0];
+      if (!(d instanceof Date)) continue;
+      const t = d.getTime();
+      if (t < monthFrom) continue;
+      const key = String(log[r][1] || '').trim() + '|' + String(log[r][2] || '').trim();
+      const work = String(log[r][2] || '').trim();
+      const oldPct = normalizePct_(log[r][3]);
+      const newPct = normalizePct_(log[r][4]);
+      const entryDelta = newPct - oldPct;
+      const completed = oldPct < 100 && newPct >= 100 ? 1 : 0;
+
+      [{ win: month, seen: monthSeen, from: monthFrom },
+       { win: week,  seen: weekSeen,  from: weekFrom }].forEach(function (w) {
+        if (t < w.from) return;
+        if (!w.seen[key]) { w.seen[key] = true; w.win.positions++; }
+        w.win.delta += entryDelta;
+        w.win.completed += completed;
+        if (!w.win.byWork[work]) w.win.byWork[work] = { positions: 0, completed: 0, delta: 0, seen: {} };
+        const bw = w.win.byWork[work];
+        if (!bw.seen[key]) { bw.seen[key] = true; bw.positions++; }
+        bw.delta += entryDelta;
+        bw.completed += completed;
+      });
+    }
+    // Служебные seen-наборы наружу не отдаём
+    [week, month].forEach(function (w) {
+      for (var k in w.byWork) {
+        if (w.byWork.hasOwnProperty(k)) delete w.byWork[k].seen;
+      }
+    });
+  }
+
+  return { ok: true, totals: totals, week: week, month: month, server_time: now() };
 }
 
 // =============================================================================
