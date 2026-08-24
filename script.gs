@@ -15,6 +15,7 @@ const CONFIG = {
   SHEET_TIPY: 'Типы_помещений',
   SHEET_LOG: 'Лог_входов',
   SHEET_EQUIP: 'Монтаж_оборудования',
+  SHEET_COMMENTS: 'Комментарии_помещений',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -136,6 +137,9 @@ function doPost(e) {
     if (body.action === 'setEquipBatch') {
       return jsonResponse(setEquipBatch(user, body.items));
     }
+    if (body.action === 'setComment') {
+      return jsonResponse(setComment(user, body.num, body.text));
+    }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
   } catch (err) {
@@ -221,6 +225,7 @@ function loadSnapshot(user) {
       assignments: {},
       tip_panels: collectUniquePanels(tipyMap),
       equip: {},
+      comments: {},
       server_time: now()
     };
   }
@@ -308,6 +313,7 @@ function loadSnapshot(user) {
     assignments: assignments,
     tip_panels: collectUniquePanels(tipyMap),
     equip: loadEquip_(ss),
+    comments: loadComments_(ss),
     server_time: now(),
     version_hash: computeVersionHash(headers, works.length, Object.keys(tipyMap).length)
   };
@@ -340,6 +346,24 @@ function loadEquip_(ss) {
     });
   }
   return equip;
+}
+
+/**
+ * Читает лист Комментарии_помещений в map: номер помещения -> { text, upd }.
+ * Листа нет — пустой map (создастся при первом сохранении комментария).
+ */
+function loadComments_(ss) {
+  const comments = {};
+  const sheet = ss.getSheetByName(CONFIG.SHEET_COMMENTS);
+  if (!sheet || sheet.getLastRow() < 2) return comments;
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  for (var i = 0; i < data.length; i++) {
+    const num = String(data[i][0] || '').trim();
+    const text = String(data[i][1] || '');
+    if (!num || !text) continue;
+    comments[num] = { text: text, upd: String(data[i][2] || '') };
+  }
+  return comments;
 }
 
 /** Процент из ячейки -> целое 0..100. Пустое/мусор -> 0. */
@@ -728,6 +752,48 @@ function setEquipBatch(user, items) {
   });
 
   return { ok: true, results: results, updated: updated };
+}
+
+/**
+ * Комментарий к помещению — лист Комментарии_помещений (A: Номер, B: Комментарий,
+ * C: Обновлено). Лист создаётся при первом сохранении. Права: любой активный
+ * пользователь, кроме Наблюдателя. Пустой текст очищает комментарий.
+ * Ввод экранируется от formula injection и ограничен 500 символами.
+ */
+function setComment(user, num, text) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  const numStr = String(num || '').trim();
+  if (!numStr) return { ok: false, error: 'Не указано помещение' };
+
+  var textStr = String(text === null || text === undefined ? '' : text).slice(0, 500).trim();
+  // Защита от formula injection: значения на =, +, -, @ — апостроф спереди
+  if (/^[=+\-@]/.test(textStr)) textStr = "'" + textStr;
+
+  const updated = textStr ? (now() + ' ' + user.name) : '';
+  withLock_(function () {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEET_COMMENTS);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEET_COMMENTS);
+      sheet.getRange(1, 1, 1, 3).setValues([['Номер помещения', 'Комментарий', 'Обновлено']]).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+    const lastRow = sheet.getLastRow();
+    var row = null;
+    if (lastRow > 1) {
+      const nums = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (var i = 0; i < nums.length; i++) {
+        if (String(nums[i][0] || '').trim() === numStr) { row = i + 2; break; }
+      }
+    }
+    if (row) {
+      sheet.getRange(row, 2, 1, 2).setValues([[textStr, updated]]);
+    } else if (textStr) {
+      sheet.appendRow([numStr, textStr, updated]);
+    }
+  });
+
+  return { ok: true, num: numStr, text: textStr.replace(/^'/, ''), updated: updated };
 }
 
 /** A1-адрес ячейки по (row, col) 1-based — для getRangeList. */

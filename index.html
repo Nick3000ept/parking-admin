@@ -462,6 +462,24 @@ body.has-selection { padding-bottom: 100px; }
 }
 .equip-upd { font-size: 11px; color: #9CA3AF; margin-top: 6px; }
 
+/* Комментарий в карточке помещения */
+.popup-comment {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font: inherit; font-size: 13px; color: #1F2937;
+  border: 1px solid #D1D5DB; border-radius: 6px; padding: 8px 10px;
+}
+.popup-comment:disabled { background: #F9FAFB; color: #6B7280; }
+.popup-comment-actions {
+  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+}
+.popup-comment-actions button {
+  background: #2563EB; color: #fff; border: none;
+  padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 13px;
+}
+.popup-comment-actions button:hover { background: #1D4ED8; }
+.popup-comment-actions button:disabled { background: #6B7280; cursor: default; }
+.popup-comment-meta { font-size: 11px; color: #9CA3AF; }
+
 /* ===== STATES ===== */
 .state-screen {
   position: fixed; inset: 0; background: #F3F4F6;
@@ -1975,6 +1993,8 @@ function renderPopup(room) {
   // Only works that have assignments
   const assignedWorks = works.filter(w => assignments[w.id_raboty] && assignments[w.id_raboty].sp);
 
+  const commentEntry = (state.data.comments && state.data.comments[room.num]) || { text: '', upd: '' };
+
   // Блок «Монтаж оборудования» — только у помещений, чьи работы есть в листе
   // Монтаж_оборудования (одна строка листа = одна работа)
   const equipEntry = state.data.equip ? state.data.equip[room.num] : null;
@@ -2039,6 +2059,16 @@ function renderPopup(room) {
       }).join('')}
     </div>
     ${equipHtml}
+    <div class="popup-works">
+      <h3>Комментарий</h3>
+      <textarea id="popupComment" class="popup-comment" rows="2" maxlength="500"
+        placeholder="${isViewer ? 'Комментария нет' : 'Заметка по помещению...'}"
+        ${isViewer ? 'disabled' : ''}>${escapeHtml(commentEntry.text)}</textarea>
+      <div class="popup-comment-actions">
+        ${isViewer ? '' : '<button id="popupCommentSave">Сохранить комментарий</button>'}
+        <span class="popup-comment-meta">${commentEntry.upd ? escapeHtml(commentEntry.upd) : ''}</span>
+      </div>
+    </div>
   `;
 
   const popup = document.getElementById('popup');
@@ -2068,6 +2098,31 @@ function renderPopup(room) {
       });
     }
   });
+
+  // Bind: комментарий — сохраняется сразу отдельной кнопкой (запись редкая)
+  const commentSaveBtn = popup.querySelector('#popupCommentSave');
+  if (commentSaveBtn) {
+    commentSaveBtn.addEventListener('click', async () => {
+      const ta = popup.querySelector('#popupComment');
+      const text = ta ? ta.value.trim() : '';
+      commentSaveBtn.disabled = true;
+      commentSaveBtn.textContent = 'Сохраняем...';
+      const res = await postAction('setComment', { num: room.num, text: text });
+      if (res && res.ok) {
+        if (!state.data.comments) state.data.comments = {};
+        if (res.text) state.data.comments[room.num] = { text: res.text, upd: res.updated || '' };
+        else delete state.data.comments[room.num];
+        saveCache();
+        refreshCard(room.num);
+        refreshPopupIfOpen(room.num);
+        toast('Комментарий сохранён');
+      } else {
+        commentSaveBtn.disabled = false;
+        commentSaveBtn.textContent = 'Сохранить комментарий';
+        toast('Комментарий не сохранился: ' + ((res && res.error) || 'нет сети'), true);
+      }
+    });
+  }
 }
 
 // ============================================================================
