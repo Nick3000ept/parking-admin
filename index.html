@@ -250,6 +250,31 @@ body.has-selection { padding-bottom: 100px; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Режим «Тех помещения»: карточка шире, работы монтажа с процентами прямо на ней */
+.card.tech {
+  width: 176px; height: auto; min-height: 52px;
+  align-items: stretch; justify-content: flex-start;
+  padding: 4px 6px 6px;
+}
+.card.tech .num, .card.tech .tip { text-align: left; }
+.card.tech .eq-line {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; line-height: 1.1; margin-top: 3px;
+  background: rgba(255,255,255,0.6); border-radius: 3px; padding: 2px 4px;
+}
+.card.tech .eq-line.eq-prog { background: #FDE68A; }
+.card.tech .eq-line.eq-done { background: #A7F3D0; }
+.card.tech .eq-line .eq-work {
+  flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card.tech .eq-line input {
+  width: 34px; font-size: 10px; padding: 1px 2px;
+  border: 1px solid #D1D5DB; border-radius: 3px; text-align: right; background: #fff;
+}
+.card.tech .eq-line input:disabled {
+  background: transparent; border-color: transparent; color: inherit;
+}
+
 /* ===== POPUP ===== */
 .popup-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.3);
@@ -668,7 +693,8 @@ const state = {
     searchNum: '',
     searchName: '',
     hideDone: false,
-    techOnly: false // чекбокс «Тех помещения»: показывать только группу «Тех помещения»
+    techOnly: false, // чекбокс «Тех помещения»: показывать только группу «Тех помещения»
+    techType: '' // выбранная категория тех-помещений (чипсы вместо работ в режиме techOnly)
   }
 };
 
@@ -865,6 +891,13 @@ function renderFilters() {
 
 function renderWorkTabs() {
   const tabsEl = document.getElementById('workTabsInner');
+
+  // Режим «Тех помещения»: вместо чипсов работ — категории тех-помещений
+  if (state.filters.techOnly) {
+    renderTechTypeTabs(tabsEl);
+    return;
+  }
+
   const works = state.data.works;
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
@@ -918,6 +951,45 @@ function renderWorkTabs() {
       tabsEl.appendChild(btn);
     });
   });
+}
+
+// Чипсы категорий тех-помещений (Венткамеры / Электрощитовые / Кроссовые / ...)
+// — только категории, реально существующие среди тех-помещений, с количеством
+function renderTechTypeTabs(tabsEl) {
+  const current = state.filters.techType;
+  const counts = {};
+  state.data.rooms.forEach(r => {
+    if (r.tip_panel !== 'Тех помещения') return;
+    const cat = roomTechCategory(r.name);
+    counts[cat] = (counts[cat] || 0) + 1;
+  });
+
+  tabsEl.innerHTML = '';
+
+  const allBtn = document.createElement('button');
+  allBtn.className = 'work-tab all-tab' + (current === '' ? ' active' : '');
+  allBtn.textContent = 'Все типы';
+  allBtn.addEventListener('click', () => selectTechType(''));
+  tabsEl.appendChild(allBtn);
+
+  // Порядок — как в TECH_CATEGORIES, «Прочие» в конце
+  const order = TECH_CATEGORIES.map(c => c[1]).concat(['Прочие']);
+  order.forEach(cat => {
+    if (!counts[cat]) return;
+    const btn = document.createElement('button');
+    btn.className = 'work-tab' + (current === cat ? ' active' : '');
+    btn.textContent = cat + ' · ' + counts[cat];
+    btn.addEventListener('click', () => selectTechType(cat));
+    tabsEl.appendChild(btn);
+  });
+}
+
+function selectTechType(cat) {
+  // Single-select: повторный клик по активной снимает (= «Все типы»)
+  state.filters.techType = state.filters.techType === cat ? '' : cat;
+  renderWorkTabs();
+  renderMatrix();
+  updateProgress();
 }
 
 function parseRoomNum(s) {
@@ -1094,6 +1166,63 @@ function buildCard(room) {
   const isViewer = state.data.user.isViewer;
   const assignments = state.data.assignments[room.num] || {};
 
+  // Режим «Тех помещения»: работы монтажа с процентами прямо на карточке,
+  // без галочек по отделке (карточка в цвете типа). Клик по карточке — попап.
+  if (state.filters.techOnly) {
+    const eq = state.data.equip && state.data.equip[room.num];
+    const eqWorks = (eq && eq.works) || [];
+    if (eqWorks.length) {
+      card.classList.add('tech');
+      eqWorks.forEach((w, idx) => {
+        const line = document.createElement('div');
+        line.className = 'eq-line' + (w.pct >= 100 ? ' eq-done' : (w.pct > 0 ? ' eq-prog' : ''));
+        line.title = w.work + (w.sp ? ' · ' + w.sp : ' · подрядчик не назначен') +
+          (w.upd ? ' · обновлено: ' + w.upd : '');
+
+        const label = document.createElement('span');
+        label.className = 'eq-work';
+        label.textContent = w.work;
+        line.appendChild(label);
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = '100';
+        input.step = '5';
+        input.value = w.pct;
+        const canEdit = !isViewer && (isAdmin || w.sp === userName);
+        if (!canEdit) input.disabled = true;
+        input.addEventListener('click', e => e.stopPropagation());
+        input.addEventListener('change', () => {
+          let pct = Math.round(Number(input.value));
+          if (isNaN(pct) || pct < 0) pct = 0;
+          if (pct > 100) pct = 100;
+          changeEquip(room.num, idx, pct);
+        });
+        line.appendChild(input);
+
+        const sign = document.createElement('span');
+        sign.textContent = '%';
+        line.appendChild(sign);
+
+        card.appendChild(line);
+      });
+    }
+    card.style.background = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
+    if (roomHasPending(room.num)) card.classList.add('pending');
+    card.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (state.selected.has(room.num)) state.selected.delete(room.num);
+        else state.selected.add(room.num);
+        card.classList.toggle('selected');
+        updateSelectionInfo();
+        return;
+      }
+      openPopup(room);
+    });
+    return card;
+  }
+
   // Определяем поведение клика и визуал карточки
   // canToggle: можно ли тут поставить/снять отметку (работа выбрана + права + не viewer)
   let canToggle = false;
@@ -1176,6 +1305,7 @@ function matchesFilters(room) {
   if (f.floor.size && !f.floor.has(room.floor)) return false;
   if (f.tip && f.tip !== room.tip_panel) return false;
   if (f.techOnly && room.tip_panel !== 'Тех помещения') return false;
+  if (f.techOnly && f.techType && roomTechCategory(room.name) !== f.techType) return false;
   if (f.searchNum && !room.num.toLowerCase().includes(f.searchNum.toLowerCase())) return false;
   if (f.searchName && !room.name.toLowerCase().includes(f.searchName.toLowerCase()) && !room.ks.toLowerCase().includes(f.searchName.toLowerCase())) return false;
 
@@ -1850,6 +1980,33 @@ function renderPopup(room) {
 }
 
 // ============================================================================
+// Тех помещения: категории по наименованию (для чипсов в режиме тех-помещений)
+// ============================================================================
+// Порядок важен: первое совпадение подстроки выигрывает
+// («Приточно-вытяжная венткамера ТП» — это Венткамеры, а не ТП)
+const TECH_CATEGORIES = [
+  ['венткамера',   'Венткамеры'],
+  ['электрощитов', 'Электрощитовые'],
+  ['кроссов',      'Кроссовые'],
+  ['итп',          'ИТП'],
+  ['цтп',          'ЦТП'],
+  ['узел учета',   'Узлы учёта'],
+  ['кнс',          'КНС'],
+  ['насосная',     'Насосные'],
+  ['тп-',          'ТП'],
+  ['ру-',          'РУ'],
+  ['ввод кл',      'Вводы КЛ']
+];
+
+function roomTechCategory(name) {
+  const low = String(name || '').toLowerCase().replace(/ё/g, 'е');
+  for (const [substr, cat] of TECH_CATEGORIES) {
+    if (low.includes(substr)) return cat;
+  }
+  return 'Прочие';
+}
+
+// ============================================================================
 // Монтаж оборудования: optimistic-запись процента
 // ============================================================================
 // Статус вычисляется из процента: 0 — не начато, 1–99 — в работе, 100 — готово
@@ -1876,10 +2033,12 @@ function changeEquip(num, idx, pct) {
   if (!w) return;
   const prev = { status: w.status, pct: w.pct };
 
-  // Сразу в интерфейс, запрос фоном, при ошибке — откат
+  // Сразу в интерфейс (попап и карточка в режиме тех-помещений), запрос фоном,
+  // при ошибке — откат
   w.status = equipStatusFromPct(pct);
   w.pct = pct;
   refreshPopupIfOpen(num);
+  refreshCard(num);
   saveCache();
 
   const mySeq = nextEquipSeq(num, idx);
@@ -1889,6 +2048,7 @@ function changeEquip(num, idx, pct) {
       w.status = prev.status;
       w.pct = prev.pct;
       refreshPopupIfOpen(num);
+      refreshCard(num);
       saveCache();
       toast('Не сохранилось: ' + ((res && res.error) || 'нет сети'), true);
       return;
@@ -1897,6 +2057,7 @@ function changeEquip(num, idx, pct) {
     w.pct = res.pct;
     if (res.updated) w.upd = res.updated;
     refreshPopupIfOpen(num);
+    refreshCard(num);
     saveCache();
   });
 }
@@ -1983,6 +2144,11 @@ function bindUI() {
 
   document.getElementById('toggleTechOnly').addEventListener('change', e => {
     state.filters.techOnly = e.target.checked;
+    // В режиме тех-помещений чипсы работ заменяются категориями тех-помещений:
+    // выбранную работу сбрасываем, при выходе — сбрасываем категорию
+    if (state.filters.techOnly) state.filters.work = '';
+    else state.filters.techType = '';
+    renderWorkTabs();
     renderMatrix();
     updateProgress();
   });
@@ -1998,6 +2164,7 @@ function bindUI() {
     state.filters.searchName = '';
     state.filters.hideDone = false;
     state.filters.techOnly = false;
+    state.filters.techType = '';
     state.selected.clear();
     document.getElementById('filterTip').value = '';
     const contractorSel = document.getElementById('filterContractor');
