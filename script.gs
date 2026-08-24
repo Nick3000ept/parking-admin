@@ -118,7 +118,7 @@ function doPost(e) {
       return jsonResponse(setMarks(user, body.marks));
     }
     if (body.action === 'setEquip') {
-      return jsonResponse(setEquip(user, body.num, body.pos, body.status, body.pct));
+      return jsonResponse(setEquip(user, body.num, body.pos, body.pct));
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
@@ -588,15 +588,16 @@ function setMarks(user, marks) {
 }
 
 /**
- * Запись факта по монтажу оборудования: статус + процент одной позиции
+ * Запись факта по монтажу оборудования: процент одной позиции
  * (поставка/монтаж/расключение/ПНР) в листе Монтаж_оборудования.
+ * Статус вычисляется из процента (0 — Не начато, 1–99 — В работе, 100 — Готово)
+ * и пишется в соседнюю колонку автоматически.
  *
  * Права: Админ — любое помещение; подрядчик — только помещения, где он вписан
  * в колонку «Подрядчик» этого листа; Наблюдатель — нет.
  * Защита от сдвижки строк: строка ищется по номеру помещения при каждом запросе.
- * Согласованность: «Готово» — всегда 100%, «Не начато» — всегда 0%.
  */
-function setEquip(user, num, posId, status, pct) {
+function setEquip(user, num, posId, pct) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
 
   var pos = null;
@@ -605,13 +606,11 @@ function setEquip(user, num, posId, status, pct) {
   }
   if (!pos) return { ok: false, error: 'Неизвестная позиция: ' + posId };
 
-  const statusStr = String(status || '').trim();
-  if (EQUIP_STATUSES.indexOf(statusStr) === -1) {
-    return { ok: false, error: 'Недопустимый статус: ' + status };
+  if (pct === null || pct === undefined || pct === '' || isNaN(Number(pct))) {
+    return { ok: false, error: 'Процент не распознан: ' + pct };
   }
-  var pctNum = normalizePct_(pct);
-  if (statusStr === 'Готово') pctNum = 100;
-  if (statusStr === 'Не начато') pctNum = 0;
+  const pctNum = normalizePct_(pct);
+  const statusStr = pctNum >= 100 ? 'Готово' : (pctNum > 0 ? 'В работе' : 'Не начато');
 
   // Страховка: пишем только в колонки статусов/процентов, не в справочную часть
   if (pos.colStatus < CONFIG.EQUIP_FIRST_WRITE_COL || pos.colPct > CONFIG.EQUIP_LAST_WRITE_COL) {
