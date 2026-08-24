@@ -253,21 +253,22 @@ body.has-selection { padding-bottom: 100px; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Режим «Тех помещения»: карточка шире, работы монтажа с процентами прямо на ней */
+/* Режим «Тех помещения»: карточка крупнее, работы монтажа с процентами прямо на ней */
 .card.tech {
-  width: 176px; height: auto; min-height: 52px;
+  width: 250px; height: auto; min-height: 52px;
   align-items: stretch; justify-content: flex-start;
-  padding: 4px 6px 6px;
+  padding: 6px 8px 8px;
 }
 .card.tech .num, .card.tech .tip { text-align: left; }
+.card.tech .num { font-size: 15px; }
 .card.tech .tip {
-  font-size: 12px; font-weight: 600; opacity: 0.95;
-  white-space: normal; line-height: 1.15;
+  font-size: 13px; font-weight: 600; opacity: 0.95;
+  white-space: normal; line-height: 1.2;
 }
 .card.tech .eq-line {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; line-height: 1.1; margin-top: 3px;
-  background: rgba(255,255,255,0.6); border-radius: 3px; padding: 2px 4px;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; line-height: 1.2; margin-top: 4px;
+  background: rgba(255,255,255,0.6); border-radius: 4px; padding: 4px 6px;
 }
 .card.tech .eq-line.eq-prog { background: #FDE68A; }
 .card.tech .eq-line.eq-done { background: #A7F3D0; }
@@ -275,8 +276,14 @@ body.has-selection { padding-bottom: 100px; }
   flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .card.tech .eq-line input {
-  width: 34px; font-size: 10px; padding: 1px 2px;
-  border: 1px solid #D1D5DB; border-radius: 3px; text-align: right; background: #fff;
+  width: 44px; font-size: 13px; padding: 2px 4px;
+  border: 1px solid #D1D5DB; border-radius: 4px; text-align: right; background: #fff;
+  -moz-appearance: textfield;
+}
+/* Спиннеры съедают место — процент вводится с клавиатуры */
+.card.tech .eq-line input::-webkit-outer-spin-button,
+.card.tech .eq-line input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
 }
 .card.tech .eq-line input:disabled {
   background: transparent; border-color: transparent; color: inherit;
