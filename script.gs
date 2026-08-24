@@ -33,16 +33,20 @@ const CONFIG = {
   COL_COMMENT: 11,
   COL_KS: 12,
 
-  // Колонки листа Монтаж_оборудования (1-based).
-  // A–E — справочная часть (сайт не пишет), F–M — статусы/проценты, N — журнал.
+  // Колонки листа Монтаж_оборудования (1-based). Одна строка = одна работа
+  // в одном помещении. A–F — справочная часть (сайт не пишет: номер, корпус,
+  // этаж, наименование, работа, подрядчик), G–I — процент/статус/журнал.
   EQUIP_COL_NUM: 1,
   EQUIP_COL_KORP: 2,
   EQUIP_COL_FLOOR: 3,
   EQUIP_COL_NAME: 4,
-  EQUIP_COL_SP: 5,
-  EQUIP_FIRST_WRITE_COL: 6,
-  EQUIP_LAST_WRITE_COL: 13,
-  EQUIP_COL_UPDATED: 14,
+  EQUIP_COL_WORK: 5,
+  EQUIP_COL_SP: 6,
+  EQUIP_COL_PCT: 7,
+  EQUIP_COL_STATUS: 8,
+  EQUIP_COL_UPDATED: 9,
+  EQUIP_FIRST_WRITE_COL: 7,
+  EQUIP_LAST_WRITE_COL: 9,
   // Помещения какой группы панели попадают в лист при setupEquip
   EQUIP_PANEL: 'Тех помещения',
 
@@ -53,13 +57,14 @@ const CONFIG = {
   VIEWER_ID: 'viewer'
 };
 
-// Позиции монтажа оборудования: id — в протоколе фронт↔бэк, name — заголовок
-// для людей, colStatus/colPct — колонки листа Монтаж_оборудования.
-const EQUIP_POSITIONS = [
-  { id: 'supply',  name: 'Поставка оборудования',    colStatus: 6,  colPct: 7 },
-  { id: 'montazh', name: 'Монтаж оборудования',      colStatus: 8,  colPct: 9 },
-  { id: 'raskl',   name: 'Расключение оборудования', colStatus: 10, colPct: 11 },
-  { id: 'pnr',     name: 'ПНР',                      colStatus: 12, colPct: 13 }
+// Наборы работ по типам тех-помещений (match — подстрока наименования,
+// без учёта регистра). Используются только при первичном наполнении листа
+// setupEquip; дальше источник правды — сами строки листа, админ может
+// добавлять строки для любых помещений и работ вручную.
+const EQUIP_WORKSETS = [
+  { match: 'электрощитов', works: ['Монтаж кабеля', 'Монтаж оборудования', 'Расключение', 'Монтаж шинопровода', 'ПНР'] },
+  { match: 'кроссов',      works: ['Заказ оборудования', 'Монтаж лотка', 'Монтаж кабеля', 'Монтаж оборудования', 'Расключение'] },
+  { match: 'венткамера',   works: ['Монтаж оборудования', 'Монтаж воздуховодов'] }
 ];
 
 const EQUIP_STATUSES = ['Не начато', 'В работе', 'Готово'];
@@ -118,7 +123,7 @@ function doPost(e) {
       return jsonResponse(setMarks(user, body.marks));
     }
     if (body.action === 'setEquip') {
-      return jsonResponse(setEquip(user, body.num, body.pos, body.pct));
+      return jsonResponse(setEquip(user, body.num, body.work, body.pct));
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
@@ -205,7 +210,6 @@ function loadSnapshot(user) {
       assignments: {},
       tip_panels: collectUniquePanels(tipyMap),
       equip: {},
-      equip_positions: equipPositionsPublic_(),
       server_time: now()
     };
   }
@@ -293,49 +297,36 @@ function loadSnapshot(user) {
     assignments: assignments,
     tip_panels: collectUniquePanels(tipyMap),
     equip: loadEquip_(ss),
-    equip_positions: equipPositionsPublic_(),
     server_time: now(),
     version_hash: computeVersionHash(headers, works.length, Object.keys(tipyMap).length)
   };
 }
 
-/** id+name позиций для фронта (без номеров колонок). */
-function equipPositionsPublic_() {
-  const out = [];
-  for (var i = 0; i < EQUIP_POSITIONS.length; i++) {
-    out.push({ id: EQUIP_POSITIONS[i].id, name: EQUIP_POSITIONS[i].name });
-  }
-  return out;
-}
-
 /**
- * Читает лист Монтаж_оборудования в map: номер помещения ->
- * { row, sp, upd, pos: { supply: {status, pct}, ... } }.
- * Листа нет — возвращает пустой map (фронт просто не покажет блок).
+ * Читает лист Монтаж_оборудования (одна строка = одна работа в помещении)
+ * в map: номер помещения -> { works: [{ work, sp, pct, status, upd }] }.
+ * Листа нет или он старой структуры (E1 не «Работа») — пустой map:
+ * фронт просто не покажет блок.
  */
 function loadEquip_(ss) {
   const equip = {};
   const sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
   if (!sheet || sheet.getLastRow() < 2) return equip;
+  if (String(sheet.getRange(1, CONFIG.EQUIP_COL_WORK).getValue() || '').trim() !== 'Работа') return equip;
 
   const data = sheet.getRange(1, 1, sheet.getLastRow(), CONFIG.EQUIP_COL_UPDATED).getValues();
   for (var i = 1; i < data.length; i++) {
     const num = String(data[i][CONFIG.EQUIP_COL_NUM - 1] || '').trim();
-    if (!num) continue;
-    const pos = {};
-    for (var p = 0; p < EQUIP_POSITIONS.length; p++) {
-      const def = EQUIP_POSITIONS[p];
-      pos[def.id] = {
-        status: String(data[i][def.colStatus - 1] || '').trim() || 'Не начато',
-        pct: normalizePct_(data[i][def.colPct - 1])
-      };
-    }
-    equip[num] = {
-      row: i + 1,
+    const work = String(data[i][CONFIG.EQUIP_COL_WORK - 1] || '').trim();
+    if (!num || !work) continue;
+    if (!equip[num]) equip[num] = { works: [] };
+    equip[num].works.push({
+      work: work,
       sp: String(data[i][CONFIG.EQUIP_COL_SP - 1] || '').trim(),
-      upd: String(data[i][CONFIG.EQUIP_COL_UPDATED - 1] || ''),
-      pos: pos
-    };
+      pct: normalizePct_(data[i][CONFIG.EQUIP_COL_PCT - 1]),
+      status: String(data[i][CONFIG.EQUIP_COL_STATUS - 1] || '').trim() || 'Не начато',
+      upd: String(data[i][CONFIG.EQUIP_COL_UPDATED - 1] || '')
+    });
   }
   return equip;
 }
@@ -588,34 +579,24 @@ function setMarks(user, marks) {
 }
 
 /**
- * Запись факта по монтажу оборудования: процент одной позиции
- * (поставка/монтаж/расключение/ПНР) в листе Монтаж_оборудования.
- * Статус вычисляется из процента (0 — Не начато, 1–99 — В работе, 100 — Готово)
- * и пишется в соседнюю колонку автоматически.
+ * Запись факта по монтажу оборудования: процент одной работы в одном помещении
+ * (строка листа Монтаж_оборудования ищется по паре номер+работа при каждом
+ * запросе — защита от сдвижки строк). Статус вычисляется из процента
+ * (0 — Не начато, 1–99 — В работе, 100 — Готово) и пишется автоматически.
  *
- * Права: Админ — любое помещение; подрядчик — только помещения, где он вписан
- * в колонку «Подрядчик» этого листа; Наблюдатель — нет.
- * Защита от сдвижки строк: строка ищется по номеру помещения при каждом запросе.
+ * Права: Админ — любая строка; подрядчик — только строки, где он вписан
+ * в колонку «Подрядчик»; Наблюдатель — нет.
  */
-function setEquip(user, num, posId, pct) {
+function setEquip(user, num, work, pct) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
 
-  var pos = null;
-  for (var i = 0; i < EQUIP_POSITIONS.length; i++) {
-    if (EQUIP_POSITIONS[i].id === String(posId)) { pos = EQUIP_POSITIONS[i]; break; }
-  }
-  if (!pos) return { ok: false, error: 'Неизвестная позиция: ' + posId };
-
+  const workStr = String(work || '').trim();
+  if (!workStr) return { ok: false, error: 'Не указана работа' };
   if (pct === null || pct === undefined || pct === '' || isNaN(Number(pct))) {
     return { ok: false, error: 'Процент не распознан: ' + pct };
   }
   const pctNum = normalizePct_(pct);
   const statusStr = pctNum >= 100 ? 'Готово' : (pctNum > 0 ? 'В работе' : 'Не начато');
-
-  // Страховка: пишем только в колонки статусов/процентов, не в справочную часть
-  if (pos.colStatus < CONFIG.EQUIP_FIRST_WRITE_COL || pos.colPct > CONFIG.EQUIP_LAST_WRITE_COL) {
-    throw new Error('Запись вне разрешённых колонок листа ' + CONFIG.SHEET_EQUIP);
-  }
 
   const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
   if (!sheet) return { ok: false, error: 'Лист "' + CONFIG.SHEET_EQUIP + '" не найден' };
@@ -626,27 +607,28 @@ function setEquip(user, num, posId, pct) {
   var row = null;
   var sp = '';
   for (var k = 0; k < refData.length; k++) {
-    if (String(refData[k][CONFIG.EQUIP_COL_NUM - 1] || '').trim() === String(num).trim()) {
+    if (String(refData[k][CONFIG.EQUIP_COL_NUM - 1] || '').trim() === String(num).trim() &&
+        String(refData[k][CONFIG.EQUIP_COL_WORK - 1] || '').trim() === workStr) {
       row = k + 2;
       sp = String(refData[k][CONFIG.EQUIP_COL_SP - 1] || '').trim();
       break;
     }
   }
-  if (!row) return { ok: false, error: 'Помещение не найдено в листе монтажа: ' + num };
+  if (!row) return { ok: false, error: 'Строка не найдена в листе монтажа: ' + num + ' / ' + workStr };
 
   if (!user.isAdmin && sp !== user.name) {
-    return { ok: false, error: 'Монтаж оборудования в этом помещении не назначен вам' };
+    return { ok: false, error: 'Эта работа в этом помещении не назначена вам' };
   }
 
-  const updated = now() + ' ' + user.name + ' (' + pos.name + ')';
+  const updated = now() + ' ' + user.name;
   withLock_(function () {
     const sh = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
-    sh.getRange(row, pos.colStatus).setValue(statusStr);
-    sh.getRange(row, pos.colPct).setValue(pctNum);
+    sh.getRange(row, CONFIG.EQUIP_COL_PCT).setValue(pctNum);
+    sh.getRange(row, CONFIG.EQUIP_COL_STATUS).setValue(statusStr);
     sh.getRange(row, CONFIG.EQUIP_COL_UPDATED).setValue(updated);
   });
 
-  return { ok: true, num: num, pos: pos.id, status: statusStr, pct: pctNum, updated: updated };
+  return { ok: true, num: num, work: workStr, status: statusStr, pct: pctNum, updated: updated };
 }
 
 /** A1-адрес ячейки по (row, col) 1-based — для getRangeList. */
@@ -899,9 +881,11 @@ function setupAll() {
 }
 
 /**
- * Создаёт лист Монтаж_оборудования и наполняет его тех-помещениями из Главного
- * (те, у кого Тип_помещения_панель = CONFIG.EQUIP_PANEL). Идемпотентно: если
- * лист уже существует — ничего не меняет. Существующие листы не трогает.
+ * Создаёт лист Монтаж_оборудования (одна строка = одна работа в помещении)
+ * и наполняет по наборам EQUIP_WORKSETS: электрощитовые, кроссовые, венткамеры
+ * из группы «Тех помещения» Главного. Идемпотентно: лист новой структуры уже
+ * есть — ничего не меняет. Лист СТАРОЙ структуры (плоские позиции в колонках)
+ * не удаляется — переименовывается в архив.
  *
  * Вызывается через ?action=setupEquip&token=... (любой активный пользователь,
  * кроме Наблюдателя) или вручную из редактора: setupEquipSheetManual.
@@ -915,9 +899,19 @@ function setupEquipSheet(user) {
     const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
     var sheet = ss.getSheetByName(CONFIG.SHEET_EQUIP);
     if (sheet) {
-      result.note = 'already_exists';
-      result.rows = Math.max(0, sheet.getLastRow() - 1);
-      return;
+      const e1 = String(sheet.getRange(1, CONFIG.EQUIP_COL_WORK).getValue() || '').trim();
+      if (e1 === 'Работа') {
+        result.note = 'already_exists';
+        result.rows = Math.max(0, sheet.getLastRow() - 1);
+        return;
+      }
+      // Старая структура — в архив (не удаляем данные)
+      var archName = CONFIG.SHEET_EQUIP + '_архив';
+      if (ss.getSheetByName(archName)) {
+        archName += '_' + Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd_HHmmss');
+      }
+      sheet.setName(archName);
+      result.archived = archName;
     }
 
     // Тип помещения -> группа панели
@@ -929,53 +923,60 @@ function setupEquipSheet(user) {
       if (tipyData[i][0]) panelByName[String(tipyData[i][0]).trim()] = String(tipyData[i][1] || '').trim();
     }
 
-    // Тех-помещения из Главного, в реестровом порядке
+    // Тех-помещения из Главного (реестровый порядок), подбор набора работ по имени
     const glSheet = ss.getSheetByName(CONFIG.SHEET_GLAVNY);
     if (!glSheet) throw new Error('Лист "' + CONFIG.SHEET_GLAVNY + '" не найден');
     const glData = glSheet.getDataRange().getValues();
     const rows = [];
+    var roomsMatched = 0;
     for (var r = 1; r < glData.length; r++) {
       const num = String(glData[r][CONFIG.COL_NUM - 1] || '').trim();
       if (!num) continue;
       const name = String(glData[r][CONFIG.COL_NAME - 1] || '').trim();
       if (panelByName[name] !== CONFIG.EQUIP_PANEL) continue;
-      rows.push([
-        num,
-        String(glData[r][CONFIG.COL_KORP - 1] || ''),
-        String(glData[r][CONFIG.COL_FLOOR - 1] || ''),
-        name,
-        '', // Подрядчик — заполняет админ в таблице
-        'Не начато', 0, 'Не начато', 0, 'Не начато', 0, 'Не начато', 0,
-        '' // Обновлено
-      ]);
+
+      var workset = null;
+      const nameLow = name.toLowerCase();
+      for (var w = 0; w < EQUIP_WORKSETS.length; w++) {
+        if (nameLow.indexOf(EQUIP_WORKSETS[w].match) !== -1) { workset = EQUIP_WORKSETS[w]; break; }
+      }
+      if (!workset) continue; // тип без набора работ — админ добавит строки вручную при необходимости
+
+      roomsMatched++;
+      for (var j = 0; j < workset.works.length; j++) {
+        rows.push([
+          num,
+          String(glData[r][CONFIG.COL_KORP - 1] || ''),
+          String(glData[r][CONFIG.COL_FLOOR - 1] || ''),
+          name,
+          workset.works[j],
+          '', // Подрядчик — заполняет админ в таблице
+          0, 'Не начато', '' // Процент / Статус / Обновлено
+        ]);
+      }
     }
-    if (rows.length === 0) throw new Error('Не найдено помещений группы "' + CONFIG.EQUIP_PANEL + '"');
+    if (rows.length === 0) throw new Error('Не найдено помещений под наборы работ');
 
     const headers = [
-      'Номер помещения', 'Корпус', 'Этаж', 'Наименование', 'Подрядчик',
-      'Поставка — статус', 'Поставка — %',
-      'Монтаж — статус', 'Монтаж — %',
-      'Расключение — статус', 'Расключение — %',
-      'ПНР — статус', 'ПНР — %',
-      'Обновлено'
+      'Номер помещения', 'Корпус', 'Этаж', 'Наименование',
+      'Работа', 'Подрядчик', '% готовности', 'Статус', 'Обновлено'
     ];
     sheet = ss.insertSheet(CONFIG.SHEET_EQUIP);
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
     sheet.setFrozenRows(1);
 
-    // Выпадающие списки статусов и ограничение процентов 0..100
-    const statusRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(EQUIP_STATUSES, true).setAllowInvalid(false).build();
+    // Ограничение процентов 0..100 и выпадающий список статусов
     const pctRule = SpreadsheetApp.newDataValidation()
       .requireNumberBetween(0, 100).setAllowInvalid(false).build();
-    for (var p = 0; p < EQUIP_POSITIONS.length; p++) {
-      sheet.getRange(2, EQUIP_POSITIONS[p].colStatus, rows.length, 1).setDataValidation(statusRule);
-      sheet.getRange(2, EQUIP_POSITIONS[p].colPct, rows.length, 1).setDataValidation(pctRule);
-    }
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(EQUIP_STATUSES, true).setAllowInvalid(false).build();
+    sheet.getRange(2, CONFIG.EQUIP_COL_PCT, rows.length, 1).setDataValidation(pctRule);
+    sheet.getRange(2, CONFIG.EQUIP_COL_STATUS, rows.length, 1).setDataValidation(statusRule);
     sheet.autoResizeColumns(1, headers.length);
 
     result.created = true;
+    result.rooms = roomsMatched;
     result.rows = rows.length;
   });
   return result;
