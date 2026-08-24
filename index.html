@@ -1511,7 +1511,7 @@ function enqueueMark(action, num, idRaboty, prev, mySeq) {
 function updateSaveButton() {
   const btn = document.getElementById('saveMarksBtn');
   if (!btn) return;
-  const n = markQueue.length;
+  const n = markQueue.length + equipQueue.length;
   if (markFlushInFlight) {
     btn.style.display = '';
     btn.disabled = true;
@@ -1532,24 +1532,36 @@ function updateSaveButton() {
 
 async function flushMarks() {
   if (markFlushInFlight) return;
-  if (markQueue.length === 0) return;
+  if (markQueue.length === 0 && equipQueue.length === 0) return;
 
   const batch = markQueue.splice(0);
+  const eqBatch = equipQueue.splice(0);
+  const total = batch.length + eqBatch.length;
   markFlushInFlight = true;
   const btn = document.getElementById('saveMarksBtn');
 
-  // Уходит чанками по MARK_FLUSH_CHUNK последовательно. sent/results копят
-  // подтверждённое сервером; при общей ошибке остаток возвращается в очередь.
+  // Уходит чанками по MARK_FLUSH_CHUNK последовательно: сначала отметки,
+  // затем проценты монтажа. sent/results копят подтверждённое сервером;
+  // при общей ошибке остаток возвращается в очередь.
   const sent = [];
   const results = [];
+  const eqSent = [];
+  const eqResults = [];
   let generalError = null;
+
+  function requeueEquip(fromIdx) {
+    for (let i = eqBatch.length - 1; i >= fromIdx; i--) {
+      const q = eqBatch[i];
+      if (!equipQueue.find(x => x.num === q.num && x.work === q.work)) equipQueue.unshift(q);
+    }
+  }
 
   try {
     for (let off = 0; off < batch.length; off += MARK_FLUSH_CHUNK) {
       const chunk = batch.slice(off, off + MARK_FLUSH_CHUNK);
-      if (btn) btn.dataset.inflight = batch.length > MARK_FLUSH_CHUNK
-        ? Math.min(off + chunk.length, batch.length) + ' из ' + batch.length
-        : String(batch.length);
+      if (btn) btn.dataset.inflight = total > MARK_FLUSH_CHUNK
+        ? Math.min(off + chunk.length, batch.length) + ' из ' + total
+        : String(total);
       updateSaveButton();
 
       const payload = chunk.map(m => ({
@@ -1580,6 +1592,36 @@ async function flushMarks() {
         results.push(rr[i] || { ok: false, error: 'нет ответа' });
       }
     }
+
+    if (generalError) {
+      // Отметки упали общей ошибкой — проценты не отправляем, возвращаем в очередь
+      requeueEquip(0);
+    } else {
+      for (let off = 0; off < eqBatch.length; off += MARK_FLUSH_CHUNK) {
+        const chunk = eqBatch.slice(off, off + MARK_FLUSH_CHUNK);
+        if (btn) btn.dataset.inflight = total > MARK_FLUSH_CHUNK
+          ? Math.min(batch.length + off + chunk.length, total) + ' из ' + total
+          : String(total);
+        updateSaveButton();
+
+        const result = await postAction('setEquipBatch', {
+          items: chunk.map(q => ({ num: q.num, work: q.work, pct: q.pct }))
+        });
+
+        if (!result.ok) {
+          generalError = result.error || 'ошибка';
+          requeueEquip(off);
+          break;
+        }
+
+        const rr = result.results || [];
+        for (let i = 0; i < chunk.length; i++) {
+          eqSent.push(chunk[i]);
+          eqResults.push(rr[i] || { ok: false, error: 'нет ответа' });
+          if (result.updated) eqResults[eqResults.length - 1].updated = result.updated;
+        }
+      }
+    }
   } finally {
     markFlushInFlight = false;
     if (btn) delete btn.dataset.inflight;
@@ -1606,18 +1648,48 @@ async function flushMarks() {
     refreshCard(m.num);
     refreshPopupIfOpen(m.num);
   }
+
+  // Применяем результаты по процентам монтажа
+  for (let i = 0; i < eqSent.length; i++) {
+    const q = eqSent[i];
+    const r = eqResults[i];
+    if (equipSeqStale(q.num, q.idx, q.mySeq)) continue; // есть более свежий ввод
+    unmarkPending(q.num, 'eq|' + q.work);
+    const entry = state.data.equip && state.data.equip[q.num];
+    const w = entry && entry.works && entry.works.find(x => x.work === q.work);
+    if (w) {
+      if (!r.ok) {
+        w.pct = q.prev.pct;
+        w.status = q.prev.status;
+        errCount++;
+        lastErr = r.error || '';
+      } else {
+        w.pct = r.pct;
+        w.status = r.status;
+        if (r.updated) w.upd = r.updated;
+        okCount++;
+      }
+    } else if (!r.ok) {
+      errCount++;
+      lastErr = r.error || '';
+    }
+    refreshCard(q.num);
+    refreshPopupIfOpen(q.num);
+  }
+
   updateProgress();
   saveCache();
 
   if (generalError) {
     updateSaveButton();
+    const left = markQueue.length + equipQueue.length;
     const done = okCount > 0 ? 'Сохранено: ' + okCount + '. ' : '';
-    toast(done + 'Не удалось отправить ' + markQueue.length + ': ' + generalError + '. Нажмите «Сохранить» ещё раз.', true);
+    toast(done + 'Не удалось отправить ' + left + ': ' + generalError + '. Нажмите «Сохранить» ещё раз.', true);
     return;
   }
 
   if (errCount > 0) {
-    toast(errCount === 1 ? 'Не сохранено 1 помещение: ' + lastErr : 'Не сохранено ' + errCount + ' помещений (последняя: ' + lastErr + ')', true);
+    toast(errCount === 1 ? 'Не сохранена 1 позиция: ' + lastErr : 'Не сохранено позиций: ' + errCount + ' (последняя: ' + lastErr + ')', true);
     updateSaveButton();
   } else {
     // Короткая зелёная индикация успеха на 1.5 сек
@@ -1637,7 +1709,7 @@ async function flushMarks() {
 // Предупреждаем при попытке закрыть страницу с несохранёнными отметками.
 // Браузер показывает свой confirm — текст контролируем не мы.
 window.addEventListener('beforeunload', (e) => {
-  if (markQueue.length > 0 || markFlushInFlight) {
+  if (markQueue.length > 0 || equipQueue.length > 0 || markFlushInFlight) {
     e.preventDefault();
     e.returnValue = '';
     return '';
@@ -2039,39 +2111,37 @@ function equipSeqStale(num, idx, mySeq) {
   return equipSeq[num + '|' + idx] !== mySeq;
 }
 
+// Очередь несохранённых процентов. Уходит вместе с отметками одним нажатием
+// «Сохранить N» (setEquipBatch: один HTTP, один Lock на весь пакет) — иначе
+// массовый ввод упирается в лимиты GAS (~30 одновременных запросов, таймаут
+// замка). Дедупликация по паре (помещение, работа): последний ввод выигрывает,
+// prev — серверное состояние до первого изменения (для отката).
+const equipQueue = []; // [{num, work, idx, pct, prev, mySeq}]
+
 function changeEquip(num, idx, pct) {
   const entry = state.data.equip && state.data.equip[num];
   const w = entry && entry.works && entry.works[idx];
   if (!w) return;
-  const prev = { status: w.status, pct: w.pct };
 
-  // Сразу в интерфейс (попап и карточка в режиме тех-помещений), запрос фоном,
-  // при ошибке — откат
+  const mySeq = nextEquipSeq(num, idx);
+  const existing = equipQueue.find(q => q.num === num && q.work === w.work);
+  const prev = existing ? existing.prev : { status: w.status, pct: w.pct };
+
+  // Сразу в интерфейс (карточка и попап), в таблицу — по кнопке «Сохранить»
   w.status = equipStatusFromPct(pct);
   w.pct = pct;
+
+  if (existing) {
+    existing.pct = pct;
+    existing.mySeq = mySeq;
+  } else {
+    equipQueue.push({ num: num, work: w.work, idx: idx, pct: pct, prev: prev, mySeq: mySeq });
+  }
+  markPending(num, 'eq|' + w.work);
   refreshPopupIfOpen(num);
   refreshCard(num);
   saveCache();
-
-  const mySeq = nextEquipSeq(num, idx);
-  postAction('setEquip', { num: num, work: w.work, pct: pct }).then(res => {
-    if (equipSeqStale(num, idx, mySeq)) return;
-    if (!res || !res.ok) {
-      w.status = prev.status;
-      w.pct = prev.pct;
-      refreshPopupIfOpen(num);
-      refreshCard(num);
-      saveCache();
-      toast('Не сохранилось: ' + ((res && res.error) || 'нет сети'), true);
-      return;
-    }
-    w.status = res.status;
-    w.pct = res.pct;
-    if (res.updated) w.upd = res.updated;
-    refreshPopupIfOpen(num);
-    refreshCard(num);
-    saveCache();
-  });
+  updateSaveButton();
 }
 
 // closePopup is called from inline HTML

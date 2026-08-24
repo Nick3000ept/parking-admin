@@ -133,6 +133,9 @@ function doPost(e) {
     if (body.action === 'setEquip') {
       return jsonResponse(setEquip(user, body.num, body.work, body.pct));
     }
+    if (body.action === 'setEquipBatch') {
+      return jsonResponse(setEquipBatch(user, body.items));
+    }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + body.action });
   } catch (err) {
@@ -637,6 +640,94 @@ function setEquip(user, num, work, pct) {
   });
 
   return { ok: true, num: num, work: workStr, status: statusStr, pct: pctNum, updated: updated };
+}
+
+/**
+ * Пакетная запись процентов монтажа: один HTTP, один Lock, одно чтение листа.
+ * items: [{ num, work, pct }]. Повтор пары (num, work) в батче — последний
+ * выигрывает. Запись группами через RangeList (ячейки с одинаковым значением
+ * пишутся одним вызовом), точечно по ячейкам — параллельные ручные правки
+ * других строк в Sheets не затираются.
+ * Возвращает { ok: true, results: [{ ok, num, work, pct?, status?, error? }], updated }.
+ */
+function setEquipBatch(user, items) {
+  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  if (!Array.isArray(items) || items.length === 0) return { ok: false, error: 'Пустой батч' };
+  if (items.length > 500) return { ok: false, error: 'Слишком большой батч (>500)' };
+
+  const results = new Array(items.length);
+  const updated = now() + ' ' + user.name;
+
+  withLock_(function () {
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_EQUIP);
+    if (!sheet || sheet.getLastRow() < 2) {
+      for (var k = 0; k < items.length; k++) {
+        results[k] = { ok: false, num: items[k] && items[k].num, work: items[k] && items[k].work, error: 'Лист "' + CONFIG.SHEET_EQUIP + '" не найден или пуст' };
+      }
+      return;
+    }
+
+    // Одно чтение справочной части: пара (номер, работа) -> строка + подрядчик
+    const refData = sheet.getRange(2, 1, sheet.getLastRow() - 1, CONFIG.EQUIP_COL_SP).getValues();
+    const rowByKey = {};
+    for (var r = 0; r < refData.length; r++) {
+      const key = String(refData[r][CONFIG.EQUIP_COL_NUM - 1] || '').trim() + '|' +
+        String(refData[r][CONFIG.EQUIP_COL_WORK - 1] || '').trim();
+      if (!(key in rowByKey)) {
+        rowByKey[key] = { row: r + 2, sp: String(refData[r][CONFIG.EQUIP_COL_SP - 1] || '').trim() };
+      }
+    }
+
+    // Валидация в памяти; повтор пары в батче — последний выигрывает
+    const finalByKey = {}; // key -> { row, pctNum, statusStr }
+    for (var i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const num = String(it.num || '').trim();
+      const workStr = String(it.work || '').trim();
+      if (!num || !workStr) {
+        results[i] = { ok: false, num: it.num, work: it.work, error: 'Не указано помещение или работа' };
+        continue;
+      }
+      if (it.pct === null || it.pct === undefined || it.pct === '' || isNaN(Number(it.pct))) {
+        results[i] = { ok: false, num: num, work: workStr, error: 'Процент не распознан: ' + it.pct };
+        continue;
+      }
+      const rec = rowByKey[num + '|' + workStr];
+      if (!rec) {
+        results[i] = { ok: false, num: num, work: workStr, error: 'Строка не найдена в листе монтажа' };
+        continue;
+      }
+      if (!user.isAdmin && rec.sp !== user.name) {
+        results[i] = { ok: false, num: num, work: workStr, error: 'Эта работа не назначена вам' };
+        continue;
+      }
+      const pctNum = normalizePct_(it.pct);
+      const statusStr = pctNum >= 100 ? 'Готово' : (pctNum > 0 ? 'В работе' : 'Не начато');
+      finalByKey[num + '|' + workStr] = { row: rec.row, pctNum: pctNum, statusStr: statusStr };
+      results[i] = { ok: true, num: num, work: workStr, pct: pctNum, status: statusStr };
+    }
+
+    // Групповая запись: ячейки с одинаковым значением — одним setValue
+    const pctGroups = {};    // pct -> [a1, ...]
+    const statusGroups = {}; // статус -> [a1, ...]
+    const updCells = [];
+    for (var key in finalByKey) {
+      if (!finalByKey.hasOwnProperty(key)) continue;
+      const f = finalByKey[key];
+      (pctGroups[f.pctNum] = pctGroups[f.pctNum] || []).push(a1_(f.row, CONFIG.EQUIP_COL_PCT));
+      (statusGroups[f.statusStr] = statusGroups[f.statusStr] || []).push(a1_(f.row, CONFIG.EQUIP_COL_STATUS));
+      updCells.push(a1_(f.row, CONFIG.EQUIP_COL_UPDATED));
+    }
+    for (var p in pctGroups) {
+      if (pctGroups.hasOwnProperty(p)) sheet.getRangeList(pctGroups[p]).setValue(Number(p));
+    }
+    for (var s in statusGroups) {
+      if (statusGroups.hasOwnProperty(s)) sheet.getRangeList(statusGroups[s]).setValue(s);
+    }
+    if (updCells.length > 0) sheet.getRangeList(updCells).setValue(updated);
+  });
+
+  return { ok: true, results: results, updated: updated };
 }
 
 /** A1-адрес ячейки по (row, col) 1-based — для getRangeList. */
