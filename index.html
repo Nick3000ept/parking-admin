@@ -254,6 +254,7 @@ body.has-selection { padding-bottom: 100px; }
   font-size: 14px; color: #fff; opacity: 0.7;
 }
 .card .num { font-size: 14px; font-weight: 700; line-height: 1.1; letter-spacing: 0.2px; }
+.card .pct { font-size: 9px; font-weight: 600; line-height: 1.1; margin-top: 1px; opacity: 0.85; }
 .card .tip {
   font-size: 9px; font-weight: 400; line-height: 1.1; opacity: 0.75;
   text-align: center; max-width: 100%; margin-top: 2px;
@@ -690,21 +691,17 @@ body.has-selection { padding-bottom: 100px; }
 // ============================================================================
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxX2skPihWXv4Wu8SV4Ehj_IybE4PjfzsnWG9b9dGjEwCtjkYev9WMEtQNicP0-N71xaA/exec';
 
-const COLOR_PRESET = {
-  'Желтый':     '#FCD34D',
-  'Жёлтый':     '#FCD34D',
-  'Серый':      '#9CA3AF',
-  'Оранжевый':  '#FB923C',
-  'Красный':    '#F87171',
-  'Синий':      '#60A5FA',
-  'Розовый':    '#F472B6',
-  'Фиолетовый': '#A78BFA',
-  'Голубой':    '#67E8F9',
-  'Коричневый': '#B45309'
-  // Зелёный намеренно НЕ включён — он зарезервирован за "работа готова"
-};
-
+// Цвет типа помещения (Типы_помещений.Цвет) на карточках больше не используется —
+// фон показывает прогресс готовности отделки (решение пользователя 2026-08-25)
 const DEFAULT_COLOR = '#E5E7EB';
+
+// Фон карточки по проценту готовности отделки: 0% — светло-серый, ближе к 100% — зелёный
+function progressColor(pct) {
+  const from = [241, 245, 249]; // #F1F5F9
+  const to = [52, 211, 153];    // #34D399 — зелёный «готово»
+  const k = Math.max(0, Math.min(100, pct)) / 100;
+  return 'rgb(' + from.map((f, i) => Math.round(f + (to[i] - f) * k)).join(',') + ')';
+}
 const STORAGE_TOKEN = 'parking_token';
 const STORAGE_DATA_PREFIX = 'parking_data_';
 const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
@@ -1217,7 +1214,7 @@ function buildCard(room) {
   const assignments = state.data.assignments[room.num] || {};
 
   // Режим «Тех помещения»: работы монтажа с процентами прямо на карточке,
-  // без галочек по отделке (карточка в цвете типа). Клик по карточке — попап.
+  // без галочек по отделке (нейтральный фон). Клик по карточке — попап.
   if (state.filters.techOnly) {
     const eq = state.data.equip && state.data.equip[room.num];
     const eqWorks = (eq && eq.works) || [];
@@ -1258,7 +1255,7 @@ function buildCard(room) {
         card.appendChild(line);
       });
     }
-    card.style.background = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
+    card.style.background = DEFAULT_COLOR;
     if (roomHasPending(room.num)) card.classList.add('pending');
     card.addEventListener('click', (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -1279,15 +1276,25 @@ function buildCard(room) {
   let isDone = false;
 
   if (!work) {
-    // Работа не выбрана — карточка информативна
-    // Если все назначенные работы готовы — зелёная; иначе цвет по типу
+    // Работа не выбрана — карточка показывает прогресс отделки: внизу процент
+    // готовых работ из назначенных, фон от светло-серого к зелёному по проценту,
+    // все работы готовы — сплошной зелёный с галочкой
     const assignedList = Object.values(assignments).filter(a => a.sp);
-    const allDone = assignedList.length > 0 && assignedList.every(a => a.date);
-    if (allDone) {
-      card.classList.add('done');
+    if (assignedList.length > 0) {
+      const doneCount = assignedList.filter(a => a.date).length;
+      const pct = Math.round(doneCount / assignedList.length * 100);
+      if (pct >= 100) {
+        card.classList.add('done');
+      } else {
+        card.style.background = progressColor(pct);
+      }
+      const pctEl = document.createElement('div');
+      pctEl.className = 'pct';
+      pctEl.textContent = pct + '%';
+      card.appendChild(pctEl);
     } else {
-      const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
-      card.style.background = color;
+      // Отделка не назначена — нейтральная карточка без процента
+      card.style.background = DEFAULT_COLOR;
     }
   } else {
     const a = assignments[work];
@@ -1309,8 +1316,7 @@ function buildCard(room) {
       }
     } else {
       // Назначено, не готово
-      const color = COLOR_PRESET[room.color_name] || DEFAULT_COLOR;
-      card.style.background = color;
+      card.style.background = DEFAULT_COLOR;
       if ((sp === userName || isAdmin) && !isViewer) {
         canToggle = true;
       } else {
