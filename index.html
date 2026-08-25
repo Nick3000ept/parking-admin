@@ -832,8 +832,8 @@ function renderApp() {
     return;
   }
 
-  // Check if user has any assignments (only for non-admin/non-viewer)
-  if (!state.data.user.isAdmin && !state.data.user.isViewer) {
+  // Check if user has any assignments (only for non-admin/non-viewer/non-tech)
+  if (!state.data.user.isAdmin && !state.data.user.isViewer && !state.data.user.isTech) {
     const hasAny = state.data.rooms.some(r => {
       const a = state.data.assignments[r.num] || {};
       return Object.values(a).some(x => x.sp === state.data.user.name);
@@ -876,9 +876,13 @@ function renderHeader() {
   let suffix = '';
   if (u.isAdmin) suffix = ' · АДМИН';
   else if (u.isViewer) suffix = ' · ПРОСМОТР';
+  else if (u.isTech) suffix = ' · МОНТАЖ';
   badge.textContent = u.name + suffix;
   badge.classList.toggle('admin', u.isAdmin);
   badge.classList.toggle('viewer', u.isViewer);
+  // Режим «Тех помещения» доступен ТОЛЬКО роли tech (решение пользователя 2026-08-25):
+  // у остальных ролей (включая Админа) кнопки нет
+  document.getElementById('techModeBtn').style.display = u.isTech ? '' : 'none';
 }
 
 function renderFilters() {
@@ -1209,6 +1213,7 @@ function buildCard(room) {
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
   const isViewer = state.data.user.isViewer;
+  const isTech = state.data.user.isTech;
   const assignments = state.data.assignments[room.num] || {};
 
   // Режим «Тех помещения»: работы монтажа с процентами прямо на карточке,
@@ -1235,7 +1240,7 @@ function buildCard(room) {
         input.max = '100';
         input.step = '5';
         input.value = w.pct;
-        const canEdit = !isViewer && (isAdmin || w.sp === userName);
+        const canEdit = !isViewer && (isAdmin || isTech || w.sp === userName);
         if (!canEdit) input.disabled = true;
         input.addEventListener('click', e => e.stopPropagation());
         input.addEventListener('change', () => {
@@ -1358,7 +1363,7 @@ function matchesFilters(room) {
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
   const isViewer = state.data.user.isViewer;
-  const seesAll = isAdmin || isViewer;
+  const seesAll = isAdmin || isViewer || state.data.user.isTech;
 
   // Для подрядчика: показываем только помещения где он назначен хотя бы на одну
   // работу или на монтаж оборудования
@@ -1397,7 +1402,7 @@ function updateProgress() {
   const u = state.data.user;
   const isAdmin = u.isAdmin;
   const isViewer = u.isViewer;
-  const seesAll = isAdmin || isViewer;
+  const seesAll = isAdmin || isViewer || u.isTech;
   const userName = u.name;
   const work = state.filters.work;
   // Имя подрядчика для подсчёта: для подрядчика — он сам, для admin/viewer — фильтр (или null = все)
@@ -2055,6 +2060,7 @@ function renderPopup(room) {
   const userName = state.data.user.name;
   const isAdmin = state.data.user.isAdmin;
   const isViewer = state.data.user.isViewer;
+  const isTech = state.data.user.isTech;
   const assignments = state.data.assignments[room.num] || {};
   const works = state.data.works;
 
@@ -2073,7 +2079,7 @@ function renderPopup(room) {
       <div class="popup-works">
         <h3>Монтаж оборудования</h3>
         ${equipWorks.map((w, idx) => {
-          const canEdit = !isViewer && (isAdmin || w.sp === userName);
+          const canEdit = !isViewer && (isAdmin || isTech || w.sp === userName);
           const stClass = w.pct >= 100 ? 'st-done' : (w.pct > 0 ? 'st-progress' : '');
           return `
             <div class="equip-row ${stClass}" data-idx="${idx}" ${w.upd ? 'title="Обновлено: ' + escapeHtml(w.upd) + '"' : ''}>
@@ -2355,6 +2361,9 @@ function bindUI() {
   });
 
   document.getElementById('techModeBtn').addEventListener('click', () => {
+    // Режим тех-помещений — только для роли tech (кнопка у остальных скрыта,
+    // но подстрахуемся и в обработчике)
+    if (!state.data || !state.data.user || !state.data.user.isTech) return;
     state.filters.techOnly = !state.filters.techOnly;
     document.getElementById('techModeBtn').classList.toggle('active', state.filters.techOnly);
     // В режиме тех-помещений чипсы работ заменяются категориями тех-помещений:

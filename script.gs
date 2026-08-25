@@ -56,7 +56,8 @@ const CONFIG = {
   LOCK_TIMEOUT_MS: 30000,
 
   ADMIN_ID: 'admin',
-  VIEWER_ID: 'viewer'
+  VIEWER_ID: 'viewer',
+  TECH_ID: 'tech' // роль «Тех помещения»: видит всё, правит только проценты монтажа (по всем помещениям)
 };
 
 // Наборы работ по типам тех-помещений (match — подстрока наименования,
@@ -171,7 +172,8 @@ function authenticate(token) {
         name: String(data[i][0] || '').trim(),
         id: id,
         isAdmin: id === CONFIG.ADMIN_ID,
-        isViewer: id === CONFIG.VIEWER_ID
+        isViewer: id === CONFIG.VIEWER_ID,
+        isTech: id === CONFIG.TECH_ID
       };
     }
   }
@@ -407,6 +409,7 @@ function computeVersionHash(headers, worksCount, tipyCount) {
 
 function setDate(user, num, idRaboty, hint) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
 
   const cell = resolveCell_(num, idRaboty, hint);
   if (cell.error) return { ok: false, error: cell.error };
@@ -444,6 +447,7 @@ function setDate(user, num, idRaboty, hint) {
 
 function clearDate(user, num, idRaboty, hint) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
 
   const cell = resolveCell_(num, idRaboty, hint);
   if (cell.error) return { ok: false, error: cell.error };
@@ -483,6 +487,7 @@ function clearDate(user, num, idRaboty, hint) {
  */
 function setMarks(user, marks) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
+  if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
   if (!Array.isArray(marks) || marks.length === 0) {
     return { ok: false, error: 'Пустой батч' };
   }
@@ -624,8 +629,8 @@ function setMarks(user, marks) {
  * запросе — защита от сдвижки строк). Статус вычисляется из процента
  * (0 — Не начато, 1–99 — В работе, 100 — Готово) и пишется автоматически.
  *
- * Права: Админ — любая строка; подрядчик — только строки, где он вписан
- * в колонку «Подрядчик»; Наблюдатель — нет.
+ * Права: Админ и роль «Тех помещения» — любая строка; подрядчик — только
+ * строки, где он вписан в колонку «Подрядчик»; Наблюдатель — нет.
  */
 function setEquip(user, num, work, pct) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
@@ -658,7 +663,7 @@ function setEquip(user, num, work, pct) {
   }
   if (!row) return { ok: false, error: 'Строка не найдена в листе монтажа: ' + num + ' / ' + workStr };
 
-  if (!user.isAdmin && sp !== user.name) {
+  if (!user.isAdmin && !user.isTech && sp !== user.name) {
     return { ok: false, error: 'Эта работа в этом помещении не назначена вам' };
   }
 
@@ -736,7 +741,7 @@ function setEquipBatch(user, items) {
         results[i] = { ok: false, num: num, work: workStr, error: 'Строка не найдена в листе монтажа' };
         continue;
       }
-      if (!user.isAdmin && rec.sp !== user.name) {
+      if (!user.isAdmin && !user.isTech && rec.sp !== user.name) {
         results[i] = { ok: false, num: num, work: workStr, error: 'Эта работа не назначена вам' };
         continue;
       }
@@ -1437,7 +1442,7 @@ function logLogin_(user, userAgent) {
       sheet.getRange('B:B').setNumberFormat('HH:mm:ss');
     }
     const now = new Date();
-    const role = user.isAdmin ? 'Админ' : (user.isViewer ? 'Наблюдатель' : 'Подрядчик');
+    const role = user.isAdmin ? 'Админ' : (user.isViewer ? 'Наблюдатель' : (user.isTech ? 'Тех помещения' : 'Подрядчик'));
     sheet.appendRow([
       Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd'),
       Utilities.formatDate(now, CONFIG.TIMEZONE, 'HH:mm:ss'),
