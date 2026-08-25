@@ -695,10 +695,10 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbxX2skPihWXv4Wu8SV4Ehj_
 // фон показывает прогресс готовности отделки (решение пользователя 2026-08-25)
 const DEFAULT_COLOR = '#E5E7EB';
 
-// Фон карточки по проценту готовности отделки: 0% — светло-серый, ближе к 100% — зелёный
+// Фон карточки «в работе» (1–99% отделки): жёлтый, насыщенность растёт с процентом
 function progressColor(pct) {
-  const from = [241, 245, 249]; // #F1F5F9
-  const to = [52, 211, 153];    // #34D399 — зелёный «готово»
+  const from = [254, 243, 199]; // #FEF3C7 — только началось
+  const to = [251, 191, 36];    // #FBBF24 — почти готово
   const k = Math.max(0, Math.min(100, pct)) / 100;
   return 'rgb(' + from.map((f, i) => Math.round(f + (to[i] - f) * k)).join(',') + ')';
 }
@@ -1277,16 +1277,18 @@ function buildCard(room) {
 
   if (!work) {
     // Работа не выбрана — карточка показывает прогресс отделки: внизу процент
-    // готовых работ из назначенных, фон от светло-серого к зелёному по проценту,
-    // все работы готовы — сплошной зелёный с галочкой
+    // готовых работ из назначенных. Не начато (0%) — светло-серый, в работе
+    // (1–99%) — жёлтый (насыщенность по проценту), всё готово — зелёный с галочкой
     const assignedList = Object.values(assignments).filter(a => a.sp);
     if (assignedList.length > 0) {
       const doneCount = assignedList.filter(a => a.date).length;
       const pct = Math.round(doneCount / assignedList.length * 100);
       if (pct >= 100) {
         card.classList.add('done');
-      } else {
+      } else if (pct > 0) {
         card.style.background = progressColor(pct);
+      } else {
+        card.style.background = DEFAULT_COLOR;
       }
       const pctEl = document.createElement('div');
       pctEl.className = 'pct';
