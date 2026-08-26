@@ -877,9 +877,9 @@ function renderHeader() {
   badge.textContent = u.name + suffix;
   badge.classList.toggle('admin', u.isAdmin);
   badge.classList.toggle('viewer', u.isViewer);
-  // Режим «Тех помещения» доступен ТОЛЬКО роли tech (решение пользователя 2026-08-25):
-  // у остальных ролей (включая Админа) кнопки нет
-  document.getElementById('techModeBtn').style.display = u.isTech ? '' : 'none';
+  // Режим «Тех помещения» доступен роли tech и Админу (решение пользователя 2026-08-26);
+  // у подрядчиков и Наблюдателя кнопки нет
+  document.getElementById('techModeBtn').style.display = (u.isTech || u.isAdmin) ? '' : 'none';
 }
 
 function renderFilters() {
@@ -2369,9 +2369,10 @@ function bindUI() {
   });
 
   document.getElementById('techModeBtn').addEventListener('click', () => {
-    // Режим тех-помещений — только для роли tech (кнопка у остальных скрыта,
+    // Режим тех-помещений — для роли tech и Админа (кнопка у остальных скрыта,
     // но подстрахуемся и в обработчике)
-    if (!state.data || !state.data.user || !state.data.user.isTech) return;
+    if (!state.data || !state.data.user ||
+        !(state.data.user.isTech || state.data.user.isAdmin)) return;
     state.filters.techOnly = !state.filters.techOnly;
     document.getElementById('techModeBtn').classList.toggle('active', state.filters.techOnly);
     // В режиме тех-помещений чипсы работ заменяются категориями тех-помещений:
