@@ -1246,7 +1246,23 @@ function renderMatrix() {
       matrix.appendChild(cell);
     }
   }
+
+  syncHeaderWidths();
 }
+
+// Шапка К1..КП4 копирует ФАКТИЧЕСКИЕ ширины колонок матрицы. Когда матрица
+// шире экрана (много корпусов / широкие карточки), её колонки распухают от
+// содержимого сверх равной доли «1fr», а шапка без этого делила бы ширину
+// поровну — расхождение копилось слева направо и корпуса «съезжали»
+// (баг 2026-09-03, два проявления: тех-режим и роль с 16 корпусами).
+function syncHeaderWidths() {
+  const matrix = document.getElementById('matrix');
+  const headers = document.getElementById('matrixColHeaders');
+  if (!matrix || !headers || !matrix.children.length) return;
+  const computed = getComputedStyle(matrix).gridTemplateColumns;
+  if (computed && computed !== 'none') headers.style.gridTemplateColumns = computed;
+}
+window.addEventListener('resize', () => requestAnimationFrame(syncHeaderWidths));
 
 function buildCard(room) {
   const card = document.createElement('div');
