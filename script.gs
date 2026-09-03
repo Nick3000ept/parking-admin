@@ -620,7 +620,38 @@ function setMarks(user, marks) {
     if (clearCells.length > 0) sheet.getRangeList(clearCells).clearContent();
   });
 
+  logAttempt_('setMarks', user.name, marks.length, results);
   return { ok: true, results: results };
+}
+
+/**
+ * Журнал попыток записи — лист «Лог_записей» (создаётся сам): когда, кто,
+ * действие, сколько позиций, сколько ок/отказано, первые причины отказов.
+ * Нужен для разбора жалоб «сохранил, а в таблице пусто» (инцидент 2026-09-03):
+ * пустой журнал за спорное время = запросы до сервера не доехали.
+ * Ошибка журнала не ломает запись.
+ */
+function logAttempt_(action, userName, total, results) {
+  try {
+    var okCount = 0, errCount = 0, reasons = [];
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i] || {};
+      if (r.ok) okCount++;
+      else {
+        errCount++;
+        if (reasons.length < 3) reasons.push(String(r.num || '') + ': ' + String(r.error || ''));
+      }
+    }
+    var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    var sh = ss.getSheetByName('Лог_записей');
+    if (!sh) {
+      sh = ss.insertSheet('Лог_записей');
+      sh.appendRow(['Когда', 'Кто', 'Действие', 'Позиций', 'ОК', 'Отказано', 'Первые причины']);
+    }
+    var reasonsStr = reasons.join('; ');
+    if (/^[=+@-]/.test(reasonsStr)) reasonsStr = "'" + reasonsStr; // защита от формул
+    sh.appendRow([new Date(), userName, action, total, okCount, errCount, reasonsStr]);
+  } catch (e) { /* журнал не должен ломать запись */ }
 }
 
 /**
@@ -785,6 +816,7 @@ function setEquipBatch(user, items) {
     logEquip_(SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID), user, logEntries);
   });
 
+  logAttempt_('setEquipBatch', user.name, items.length, results);
   return { ok: true, results: results, updated: updated };
 }
 
