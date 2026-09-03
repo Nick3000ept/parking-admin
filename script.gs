@@ -112,6 +112,26 @@ function doGet(e) {
       return jsonResponse(equipStats());
     }
 
+    // Последние строки журнала попыток записи (Лог_записей) — для удалённой
+    // диагностики «сохранил, а в таблице пусто». Только Админ и Наблюдатель.
+    if (action === 'writeLog') {
+      if (!user.isAdmin && !user.isViewer) {
+        return jsonResponse({ ok: false, error: 'Только для админа и наблюдателя' });
+      }
+      const sh = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName('Лог_записей');
+      if (!sh || sh.getLastRow() < 2) return jsonResponse({ ok: true, rows: [] });
+      const n = Math.min(50, sh.getLastRow() - 1);
+      const vals = sh.getRange(sh.getLastRow() - n + 1, 1, n, 7).getValues();
+      const rows = vals.map(function (v) {
+        return {
+          when: v[0] instanceof Date ? Utilities.formatDate(v[0], CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss') : String(v[0]),
+          who: String(v[1]), action: String(v[2]),
+          total: v[3], ok: v[4], rejected: v[5], reasons: String(v[6] || '')
+        };
+      });
+      return jsonResponse({ ok: true, rows: rows });
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err && err.message ? err.message : err) });
