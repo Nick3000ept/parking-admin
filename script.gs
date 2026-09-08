@@ -121,12 +121,17 @@ function doGet(e) {
       const sh = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName('Лог_записей');
       if (!sh || sh.getLastRow() < 2) return jsonResponse({ ok: true, rows: [] });
       const n = Math.min(50, sh.getLastRow() - 1);
-      const vals = sh.getRange(sh.getLastRow() - n + 1, 1, n, 7).getValues();
+      const nCols = Math.max(7, sh.getLastColumn());
+      const vals = sh.getRange(sh.getLastRow() - n + 1, 1, n, nCols).getValues();
       const rows = vals.map(function (v) {
         return {
           when: v[0] instanceof Date ? Utilities.formatDate(v[0], CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss') : String(v[0]),
           who: String(v[1]), action: String(v[2]),
-          total: v[3], ok: v[4], rejected: v[5], reasons: String(v[6] || '')
+          total: v[3], ok: v[4], rejected: v[5], reasons: String(v[6] || ''),
+          // Детали контрольного перечитывания (с 2026-09-08)
+          asked_set: v[7], asked_clear: v[8], already_set: v[9], already_empty: v[10],
+          written: v[11], cleared: v[12], retried: v[13], not_confirmed: v[14],
+          not_confirmed_list: String(v[15] || ''), samples: String(v[16] || '')
         };
       });
       return jsonResponse({ ok: true, rows: rows });
@@ -513,6 +518,8 @@ function setMarks(user, marks) {
   }
 
   const results = new Array(marks.length);
+  // Итог контрольного перечитывания — попадает в журнал «Лог_записей»
+  const verify = { written: 0, cleared: 0, retried: 0, failed: 0, failedList: [] };
   withLock_(function () {
     const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
     const sheet = ss.getSheetByName(CONFIG.SHEET_GLAVNY);
@@ -574,6 +581,10 @@ function setMarks(user, marks) {
     const todayStr = Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd');
     const setCells = [];   // A1-адреса для групповой записи даты
     const clearCells = []; // A1-адреса для групповой очистки
+    // Цели записи для контрольного перечитывания (инцидент 2026-09-08:
+    // бэк отвечал «ок», а значения в ячейки не ложились)
+    const setTargets = [];   // {i, row, col, num, id_raboty}
+    const clearTargets = [];
 
     for (var i = 0; i < marks.length; i++) {
       const m = marks[i] || {};
@@ -618,16 +629,18 @@ function setMarks(user, marks) {
             continue;
           }
           setCells.push(a1_(row, cols.colDate));
+          setTargets.push({ i: i, row: row, col: cols.colDate, num: num, id_raboty: idRaboty });
           rowVals[cols.colDate - 1] = today; // чтобы повтор той же ячейки в батче увидел дату
-          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: todayStr };
+          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: todayStr, note: 'written' };
         } else if (action === 'clear') {
           if (!currentDate) {
             results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'already_empty' };
             continue;
           }
           clearCells.push(a1_(row, cols.colDate));
+          clearTargets.push({ i: i, row: row, col: cols.colDate, num: num, id_raboty: idRaboty });
           rowVals[cols.colDate - 1] = '';
-          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '' };
+          results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'cleared' };
         } else {
           results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Unknown action: ' + action };
         }
@@ -638,10 +651,82 @@ function setMarks(user, marks) {
 
     if (setCells.length > 0) sheet.getRangeList(setCells).setValue(today);
     if (clearCells.length > 0) sheet.getRangeList(clearCells).clearContent();
+
+    // --- Контрольное перечитывание (2026-09-08) ---------------------------
+    // Раньше бэк считал запись успешной по факту отсутствия исключения и
+    // отвечал «ок», даже если значение в ячейку не легло: пользователь видел
+    // зелёные отметки, в таблице было пусто, в журнале — «выполнено».
+    // Теперь после записи перечитываем те же ячейки, неподтверждённые пишем
+    // повторно по одной, и если и это не помогло — честно возвращаем ошибку.
+    if (setTargets.length > 0 || clearTargets.length > 0) {
+      SpreadsheetApp.flush();
+      const fresh = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+      const retrySet = [];
+      const retryClear = [];
+
+      for (var s = 0; s < setTargets.length; s++) {
+        const t = setTargets[s];
+        if (isEmptyCell_(fresh[t.row - 1][t.col - 1])) retrySet.push(t);
+        else verify.written++;
+      }
+      for (var c = 0; c < clearTargets.length; c++) {
+        const t = clearTargets[c];
+        if (isEmptyCell_(fresh[t.row - 1][t.col - 1])) verify.cleared++;
+        else retryClear.push(t);
+      }
+
+      if (retrySet.length > 0 || retryClear.length > 0) {
+        verify.retried = retrySet.length + retryClear.length;
+        for (var s2 = 0; s2 < retrySet.length; s2++) {
+          sheet.getRange(retrySet[s2].row, retrySet[s2].col).setValue(today);
+        }
+        for (var c2 = 0; c2 < retryClear.length; c2++) {
+          sheet.getRange(retryClear[c2].row, retryClear[c2].col).clearContent();
+        }
+        SpreadsheetApp.flush();
+
+        for (var s3 = 0; s3 < retrySet.length; s3++) {
+          const t = retrySet[s3];
+          if (isEmptyCell_(sheet.getRange(t.row, t.col).getValue())) {
+            results[t.i] = {
+              ok: false, num: t.num, id_raboty: t.id_raboty,
+              error: 'Таблица не подтвердила запись — отметка НЕ сохранена, повторите'
+            };
+            verify.failed++;
+            if (verify.failedList.length < 20) verify.failedList.push(t.num);
+          } else {
+            verify.written++;
+          }
+        }
+        for (var c3 = 0; c3 < retryClear.length; c3++) {
+          const t = retryClear[c3];
+          if (isEmptyCell_(sheet.getRange(t.row, t.col).getValue())) {
+            verify.cleared++;
+          } else {
+            results[t.i] = {
+              ok: false, num: t.num, id_raboty: t.id_raboty,
+              error: 'Таблица не подтвердила снятие отметки — повторите'
+            };
+            verify.failed++;
+            if (verify.failedList.length < 20) verify.failedList.push(t.num);
+          }
+        }
+      }
+    }
   });
 
-  logAttempt_('setMarks', user.name, marks.length, results);
+  logAttempt_('setMarks', user.name, marks.length, results, marks, verify);
   return { ok: true, results: results };
+}
+
+/**
+ * Пустая ли ячейка на самом деле: '' , null, undefined или строка из пробелов
+ * (в листе встречаются ячейки с невидимыми пробелами после ручных правок).
+ */
+function isEmptyCell_(v) {
+  if (v === '' || v === null || v === undefined) return true;
+  if (v instanceof Date) return false;
+  return String(v).trim() === '';
 }
 
 /**
@@ -651,27 +736,56 @@ function setMarks(user, marks) {
  * пустой журнал за спорное время = запросы до сервера не доехали.
  * Ошибка журнала не ломает запись.
  */
-function logAttempt_(action, userName, total, results) {
+function logAttempt_(action, userName, total, results, marks, verify) {
   try {
     var okCount = 0, errCount = 0, reasons = [];
+    var nSet = 0, nClear = 0, nAlreadySet = 0, nAlreadyEmpty = 0;
+    var samples = [];
     for (var i = 0; i < results.length; i++) {
       var r = results[i] || {};
+      var mk = (marks && marks[i]) ? marks[i] : {};
+      if (mk.action === 'set') nSet++;
+      else if (mk.action === 'clear') nClear++;
+      if (r.note === 'already_set') nAlreadySet++;
+      if (r.note === 'already_empty') nAlreadyEmpty++;
+      if (samples.length < 10 && mk.num) {
+        samples.push(String(mk.num) + ' ' + String(mk.action || '?') +
+          (r.note ? '/' + r.note : (r.ok ? '' : '/отказ')));
+      }
       if (r.ok) okCount++;
       else {
         errCount++;
         if (reasons.length < 3) reasons.push(String(r.num || '') + ': ' + String(r.error || ''));
       }
     }
+    var v = verify || { written: 0, cleared: 0, retried: 0, failed: 0, failedList: [] };
+
     var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
     var sh = ss.getSheetByName('Лог_записей');
+    var headers = ['Когда', 'Кто', 'Действие', 'Позиций', 'ОК', 'Отказано', 'Первые причины',
+                   'Просили поставить', 'Просили снять', 'Уже стояло', 'Уже пусто',
+                   'Записано и проверено', 'Снято и проверено', 'Повторов', 'Не подтвердилось',
+                   'Что не подтвердилось', 'Примеры позиций'];
     if (!sh) {
       sh = ss.insertSheet('Лог_записей');
-      sh.appendRow(['Когда', 'Кто', 'Действие', 'Позиций', 'ОК', 'Отказано', 'Первые причины']);
+      sh.appendRow(headers);
+    } else if (sh.getLastColumn() < headers.length) {
+      // Лист от прежней версии (7 колонок) — дописываем заголовки новых
+      sh.getRange(1, 1, 1, headers.length).setValues([headers]);
     }
-    var reasonsStr = reasons.join('; ');
-    if (/^[=+@-]/.test(reasonsStr)) reasonsStr = "'" + reasonsStr; // защита от формул
-    sh.appendRow([new Date(), userName, action, total, okCount, errCount, reasonsStr]);
+    var reasonsStr = safeLogText_(reasons.join('; '));
+    sh.appendRow([new Date(), userName, action, total, okCount, errCount, reasonsStr,
+      nSet, nClear, nAlreadySet, nAlreadyEmpty,
+      v.written, v.cleared, v.retried, v.failed,
+      safeLogText_(v.failedList.join(', ')), safeLogText_(samples.join('; '))]);
   } catch (e) { /* журнал не должен ломать запись */ }
+}
+
+/** Экранирование текста для журнала: защита от formula injection. */
+function safeLogText_(s) {
+  var out = String(s || '');
+  if (/^[=+@-]/.test(out)) out = "'" + out;
+  return out.length > 400 ? out.slice(0, 400) : out;
 }
 
 /**
