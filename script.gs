@@ -17,6 +17,10 @@ const CONFIG = {
   SHEET_EQUIP: 'Монтаж_оборудования',
   SHEET_COMMENTS: 'Комментарии_помещений',
   SHEET_EQUIP_LOG: 'Журнал_монтажа',
+  // Журнал отметок отделки (2026-09-08): A Дата записи, B Помещение, C Работа
+  // (полное название), D Действие, E Кто, F Когда записано. Источник правды
+  // по факту выполнения; в «Главный» сайт даты больше не пишет.
+  SHEET_FACT: 'Факт с админки',
 
   // L = 12-я колонка. GAS пишет только в M+ (>= 13). См. §3 TZ.md.
   REGISTRY_LAST_COL: 12,
@@ -101,7 +105,9 @@ function doGet(e) {
 
     if (action === 'load') {
       logLogin_(user, params.ua || '');
-      return jsonResponse(loadSnapshot(user));
+      // factSheet — только для нагрузочных тестов (лист «Факт_тест...»),
+      // боевой фронт этот параметр не передаёт
+      return jsonResponse(loadSnapshot(user, testFactSheet_(params.factSheet)));
     }
 
     if (action === 'setupEquip') {
@@ -137,6 +143,15 @@ function doGet(e) {
       return jsonResponse({ ok: true, rows: rows });
     }
 
+    // Сверка листа «Факт с админки» (журнал отметок) с датами листа «Главный».
+    // Отдаёт только агрегаты и примеры расхождений — без выгрузки данных.
+    if (action === 'factCheck') {
+      if (!user.isAdmin && !user.isViewer) {
+        return jsonResponse({ ok: false, error: 'Только для админа и наблюдателя' });
+      }
+      return jsonResponse(factCheck_());
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ ok: false, error: String(err && err.message ? err.message : err) });
@@ -153,14 +168,17 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: 'Доступ закрыт' });
     }
 
+    // Одиночные setDate/clearDate оставлены для уже открытых вкладок старого
+    // фронта — с 2026-09-08 они идут тем же путём, что и батч: запись в журнал
+    // «Факт с админки», лист «Главный» не меняется.
     if (body.action === 'setDate') {
-      return jsonResponse(setDate(user, body.num, body.id_raboty, body.hint));
+      return jsonResponse(setMarks(user, [{ action: 'set', num: body.num, id_raboty: body.id_raboty }]));
     }
     if (body.action === 'clearDate') {
-      return jsonResponse(clearDate(user, body.num, body.id_raboty, body.hint));
+      return jsonResponse(setMarks(user, [{ action: 'clear', num: body.num, id_raboty: body.id_raboty }]));
     }
     if (body.action === 'setMarks') {
-      return jsonResponse(setMarks(user, body.marks));
+      return jsonResponse(setMarks(user, body.marks, testFactSheet_(body.factSheet)));
     }
     if (body.action === 'setEquip') {
       return jsonResponse(setEquip(user, body.num, body.work, body.pct));
@@ -209,7 +227,11 @@ function authenticate(token) {
 // Load snapshot
 // =============================================================================
 
-function loadSnapshot(user) {
+/**
+ * Полный снимок для фронта. factSheetName задают только нагрузочные тесты —
+ * боевой фронт его не передаёт и читает журнал CONFIG.SHEET_FACT.
+ */
+function loadSnapshot(user, factSheetName) {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
 
   // Работы
@@ -264,8 +286,11 @@ function loadSnapshot(user) {
   const headers = glData[0];
 
   // Маппинг ИД_работы -> { col_date, col_sp } (1-based)
-  // Заголовок колонки даты = Работы.Полное название
-  // Заголовок колонки СП = Работы.Полное название + " СП"
+  // Заголовок колонки СП = Работы.Полное название + " СП" — обязательна.
+  // Колонка даты (заголовок = Полное название) с 2026-09-08 необязательна:
+  // факт живёт в журнале «Факт с админки», в «Главный» сайт не пишет.
+  // Если колонка даты в листе осталась — она читается только как запасной
+  // источник для пар, которых ещё нет в журнале.
   const workColMap = {};
   for (var j = CONFIG.REGISTRY_LAST_COL; j < headers.length; j++) {
     const h = String(headers[j] || '').trim();
@@ -282,6 +307,11 @@ function loadSnapshot(user) {
       }
     }
   }
+
+  // Факт выполнения: последняя строка журнала по паре «помещение + работа»
+  const factMap = readFactMap_(ss, factSheetName);
+  const fullNameById = {};
+  for (var wf = 0; wf < works.length; wf++) fullNameById[works[wf].id_raboty] = works[wf].full_name;
 
   // Помещения и назначения
   const rooms = [];
@@ -316,17 +346,28 @@ function loadSnapshot(user) {
     for (var wid in workColMap) {
       if (!workColMap.hasOwnProperty(wid)) continue;
       const cols = workColMap[wid];
-      if (!cols.col_date || !cols.col_sp) continue;
+      if (!cols.col_sp) continue;
 
-      const dateVal = row[cols.col_date - 1];
       const spVal = row[cols.col_sp - 1];
       const sp = spVal ? String(spVal).trim() : '';
 
-      var dateStr = '';
-      if (dateVal instanceof Date) {
-        dateStr = Utilities.formatDate(dateVal, CONFIG.TIMEZONE, 'yyyy-MM-dd');
-      } else if (dateVal !== '' && dateVal !== null && dateVal !== undefined) {
-        dateStr = String(dateVal);
+      // Дата факта: журнал главнее. Пары нет в журнале — запасной источник
+      // старая колонка даты в «Главном» (если её ещё не убрали из листа).
+      const factKey = numStr + '|' + (fullNameById[wid] || '');
+      var dateStr;
+      if (factKey in factMap) {
+        dateStr = factMap[factKey];
+      } else if (cols.col_date) {
+        const dateVal = row[cols.col_date - 1];
+        if (dateVal instanceof Date) {
+          dateStr = Utilities.formatDate(dateVal, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+        } else if (dateVal !== '' && dateVal !== null && dateVal !== undefined) {
+          dateStr = String(dateVal);
+        } else {
+          dateStr = '';
+        }
+      } else {
+        dateStr = '';
       }
 
       if (sp || dateStr) {
@@ -432,85 +473,34 @@ function computeVersionHash(headers, worksCount, tipyCount) {
 // Write actions
 // =============================================================================
 
-function setDate(user, num, idRaboty, hint) {
-  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
-  if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
+// Старые setDate/clearDate (запись даты прямо в ячейку листа «Главный»)
+// удалены 2026-09-08: сайт больше не пишет в «Главный», обе команды из
+// doPost идут через setMarks в журнал «Факт с админки».
 
-  const cell = resolveCell_(num, idRaboty, hint);
-  if (cell.error) return { ok: false, error: cell.error };
-
-  // Проверка прав
-  if (!user.isAdmin) {
-    if (cell.spValue !== user.name) {
-      return { ok: false, error: 'Эта работа не назначена вам' };
-    }
-  } else {
-    if (!cell.spValue) {
-      return { ok: false, error: 'Работа не назначена никому, нечего отмечать' };
-    }
-  }
-
-  // Идемпотентность
-  if (cell.currentDate) {
-    return { ok: true, date: cell.currentDate, note: 'already_set' };
-  }
-
-  assertWritableColumn(cell.colDate);
-  const today = new Date();
-  withLock_(function () {
-    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
-    sheet.getRange(cell.row, cell.colDate).setValue(today);
-  });
-
-  return {
-    ok: true,
-    date: Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd'),
-    num: num,
-    id_raboty: idRaboty
-  };
-}
-
-function clearDate(user, num, idRaboty, hint) {
-  if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
-  if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
-
-  const cell = resolveCell_(num, idRaboty, hint);
-  if (cell.error) return { ok: false, error: cell.error };
-
-  if (!user.isAdmin) {
-    if (cell.spValue !== user.name) {
-      return { ok: false, error: 'Эта работа не назначена вам' };
-    }
-  }
-
-  if (!cell.currentDate) {
-    return { ok: true, date: '', note: 'already_empty', num: num, id_raboty: idRaboty };
-  }
-
-  assertWritableColumn(cell.colDate);
-  withLock_(function () {
-    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_GLAVNY);
-    sheet.getRange(cell.row, cell.colDate).clearContent();
-  });
-
-  return { ok: true, date: '', num: num, id_raboty: idRaboty };
-}
 
 /**
- * Батчевая запись/очистка отметок. Один HTTP, один Lock, один открытый sheet.
- * Снимает конкуренцию за LockService при множественных кликах в режиме отметки.
+ * Батчевая запись отметок в журнал «Факт с админки» (с 2026-09-08).
  *
- * Масштабируется на сотни отметок: три bulk-чтения (Ведомость_работ, весь лист
- * Главный) + вся валидация в памяти + две групповые записи через RangeList —
- * вместо пары обращений к Sheets API на каждую отметку. Запись точечная по
- * ячейкам (не целыми колонками), поэтому параллельные ручные правки в Sheets
- * не затираются.
+ * Куда пишем: только журнал — по строке на каждое изменение
+ * [Дата записи, Помещение, Работа, Действие, Кто, Когда записано].
+ * Снятие отметки = строка с пустой датой и действием «снято».
+ * Лист «Главный» сайт не меняет вовсе: оттуда читаются только назначения
+ * подрядчиков (колонки «<Работа> СП»).
  *
- * marks: [{ action: 'set'|'clear', num, id_raboty, hint }] — hint игнорируется
- * (оставлен в протоколе для совместимости с уже открытыми сессиями фронта).
+ * Почему так: запись в конкретную ячейку Google Sheets периодически не
+ * доходила при успешном ответе сервера (инцидент 2026-09-08; сверка журнала
+ * попыток с фактом: 03.09 — 82 позиции «ок» / 39 дат в таблице, 05.09 — 12 / 0).
+ * Добавление строк в конец листа за всё время не потерялось ни разу.
+ *
+ * Текущее состояние пары «помещение + работа» = последняя строка журнала;
+ * если пары в журнале ещё нет — старая колонка даты в «Главный» (переходный
+ * период, пока колонки дат не убраны из листа).
+ *
+ * marks: [{ action: 'set'|'clear', num, id_raboty, hint }] — hint игнорируется.
+ * factSheetName — имя листа-журнала, задаётся только тестами; пусто = боевой.
  * Возвращает: { ok: true, results: [{ ok, num, id_raboty, date?, error?, note? }] }
  */
-function setMarks(user, marks) {
+function setMarks(user, marks, factSheetName) {
   if (user.isViewer) return { ok: false, error: 'У роли «Наблюдатель» нет прав на редактирование' };
   if (user.isTech) return { ok: false, error: 'Роль «Тех помещения» отмечает только монтаж оборудования' };
   if (!Array.isArray(marks) || marks.length === 0) {
@@ -541,11 +531,12 @@ function setMarks(user, marks) {
       }
     }
 
-    // Весь Главный одним чтением: заголовки, строки помещений, текущие значения
+    // Весь Главный одним чтением: заголовки и назначения подрядчиков
     const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
     const headers = values[0];
 
-    // Колонки работы ищем лениво и кэшируем — в батче обычно 1-2 разные работы
+    // Колонка подрядчика по работе (обязательна); колонка даты — только как
+    // запасной источник состояния, если её ещё не убрали из листа.
     const colsByWorkId = {};
     function colsForWork_(idRaboty) {
       const key = String(idRaboty).trim();
@@ -562,29 +553,29 @@ function setMarks(user, marks) {
           if (h === workName) colDate = j + 1;
           if (h === workName + ' СП') colSp = j + 1;
         }
-        out = (colDate && colSp)
-          ? { colDate: colDate, colSp: colSp }
-          : { error: 'Колонки работы "' + workName + '" не найдены в листе Главный' };
+        out = colSp
+          ? { colDate: colDate, colSp: colSp, workName: workName }
+          : { error: 'Колонка «' + workName + ' СП» не найдена в листе Главный' };
       }
       colsByWorkId[key] = out;
       return out;
     }
 
-    // Номер помещения -> строка листа (первое совпадение, как в locateCell)
+    // Номер помещения -> строка листа (первое совпадение)
     const rowByNum = {};
     for (var r = 1; r < values.length; r++) {
       const numVal = String(values[r][CONFIG.COL_NUM - 1] || '').trim();
       if (numVal && !(numVal in rowByNum)) rowByNum[numVal] = r + 1;
     }
 
+    // Факт: последняя строка журнала по паре побеждает
+    const factMap = readFactMap_(ss, factSheetName);
+
     const today = new Date();
     const todayStr = Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd');
-    const setCells = [];   // A1-адреса для групповой записи даты
-    const clearCells = []; // A1-адреса для групповой очистки
-    // Цели записи для контрольного перечитывания (инцидент 2026-09-08:
-    // бэк отвечал «ок», а значения в ячейки не ложились)
-    const setTargets = [];   // {i, row, col, num, id_raboty}
-    const clearTargets = [];
+    const stamp = new Date();
+    const rowsToAppend = [];
+    const targets = []; // {i, num, work, id_raboty, want} — want: дата или '' (снято)
 
     for (var i = 0; i < marks.length; i++) {
       const m = marks[i] || {};
@@ -601,12 +592,15 @@ function setMarks(user, marks) {
         const rowVals = values[row - 1];
         const spRaw = rowVals[cols.colSp - 1];
         const spValue = spRaw ? String(spRaw).trim() : '';
-        const dateRaw = rowVals[cols.colDate - 1];
-        var currentDate = '';
-        if (dateRaw instanceof Date) {
-          currentDate = Utilities.formatDate(dateRaw, CONFIG.TIMEZONE, 'yyyy-MM-dd');
-        } else if (dateRaw !== '' && dateRaw !== null && dateRaw !== undefined) {
-          currentDate = String(dateRaw);
+
+        const factKey = String(num).trim() + '|' + cols.workName;
+        var currentDate;
+        if (factKey in factMap) {
+          currentDate = factMap[factKey];
+        } else if (cols.colDate) {
+          currentDate = normDate_(rowVals[cols.colDate - 1]);
+        } else {
+          currentDate = '';
         }
 
         if (!user.isAdmin) {
@@ -621,25 +615,23 @@ function setMarks(user, marks) {
           }
         }
 
-        assertWritableColumn(cols.colDate);
-
         if (action === 'set') {
           if (currentDate) {
             results[i] = { ok: true, num: num, id_raboty: idRaboty, date: currentDate, note: 'already_set' };
             continue;
           }
-          setCells.push(a1_(row, cols.colDate));
-          setTargets.push({ i: i, row: row, col: cols.colDate, num: num, id_raboty: idRaboty });
-          rowVals[cols.colDate - 1] = today; // чтобы повтор той же ячейки в батче увидел дату
+          rowsToAppend.push([today, num, cols.workName, 'отмечено', user.name, stamp]);
+          targets.push({ i: i, num: num, work: cols.workName, id_raboty: idRaboty, want: todayStr });
+          factMap[factKey] = todayStr; // повтор той же пары в батче увидит дату
           results[i] = { ok: true, num: num, id_raboty: idRaboty, date: todayStr, note: 'written' };
         } else if (action === 'clear') {
           if (!currentDate) {
             results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'already_empty' };
             continue;
           }
-          clearCells.push(a1_(row, cols.colDate));
-          clearTargets.push({ i: i, row: row, col: cols.colDate, num: num, id_raboty: idRaboty });
-          rowVals[cols.colDate - 1] = '';
+          rowsToAppend.push(['', num, cols.workName, 'снято', user.name, stamp]);
+          targets.push({ i: i, num: num, work: cols.workName, id_raboty: idRaboty, want: '' });
+          factMap[factKey] = '';
           results[i] = { ok: true, num: num, id_raboty: idRaboty, date: '', note: 'cleared' };
         } else {
           results[i] = { ok: false, num: num, id_raboty: idRaboty, error: 'Unknown action: ' + action };
@@ -649,67 +641,48 @@ function setMarks(user, marks) {
       }
     }
 
-    if (setCells.length > 0) sheet.getRangeList(setCells).setValue(today);
-    if (clearCells.length > 0) sheet.getRangeList(clearCells).clearContent();
+    if (rowsToAppend.length === 0) return;
 
-    // --- Контрольное перечитывание (2026-09-08) ---------------------------
-    // Раньше бэк считал запись успешной по факту отсутствия исключения и
-    // отвечал «ок», даже если значение в ячейку не легло: пользователь видел
-    // зелёные отметки, в таблице было пусто, в журнале — «выполнено».
-    // Теперь после записи перечитываем те же ячейки, неподтверждённые пишем
-    // повторно по одной, и если и это не помогло — честно возвращаем ошибку.
-    if (setTargets.length > 0 || clearTargets.length > 0) {
+    // --- Запись в журнал + контрольное перечитывание -----------------------
+    // Пишем блоком в конец листа, затем перечитываем ровно эти строки и
+    // сверяем помещение / работу / дату. Не сошлось — дописываем повторно и
+    // проверяем ещё раз; и только если снова не сошлось, честно возвращаем
+    // ошибку по позиции (фронт откатит карточку и покажет причину).
+    const fact = getOrCreateFactSheet_(ss, factSheetName);
+    const startRow = fact.getLastRow() + 1;
+    fact.getRange(startRow, 1, rowsToAppend.length, 6).setValues(rowsToAppend);
+    SpreadsheetApp.flush();
+
+    const back = fact.getRange(startRow, 1, rowsToAppend.length, 3).getValues();
+    const retry = [];
+    for (var v = 0; v < targets.length; v++) {
+      if (factRowMatches_(back[v], targets[v])) {
+        if (targets[v].want) verify.written++; else verify.cleared++;
+      } else {
+        retry.push(targets[v]);
+      }
+    }
+
+    if (retry.length > 0) {
+      verify.retried = retry.length;
+      const again = retry.map(function (t) {
+        return [t.want ? today : '', t.num, t.work, t.want ? 'отмечено' : 'снято', user.name, stamp];
+      });
+      const startRow2 = fact.getLastRow() + 1;
+      fact.getRange(startRow2, 1, again.length, 6).setValues(again);
       SpreadsheetApp.flush();
-      const fresh = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
-      const retrySet = [];
-      const retryClear = [];
-
-      for (var s = 0; s < setTargets.length; s++) {
-        const t = setTargets[s];
-        if (isEmptyCell_(fresh[t.row - 1][t.col - 1])) retrySet.push(t);
-        else verify.written++;
-      }
-      for (var c = 0; c < clearTargets.length; c++) {
-        const t = clearTargets[c];
-        if (isEmptyCell_(fresh[t.row - 1][t.col - 1])) verify.cleared++;
-        else retryClear.push(t);
-      }
-
-      if (retrySet.length > 0 || retryClear.length > 0) {
-        verify.retried = retrySet.length + retryClear.length;
-        for (var s2 = 0; s2 < retrySet.length; s2++) {
-          sheet.getRange(retrySet[s2].row, retrySet[s2].col).setValue(today);
-        }
-        for (var c2 = 0; c2 < retryClear.length; c2++) {
-          sheet.getRange(retryClear[c2].row, retryClear[c2].col).clearContent();
-        }
-        SpreadsheetApp.flush();
-
-        for (var s3 = 0; s3 < retrySet.length; s3++) {
-          const t = retrySet[s3];
-          if (isEmptyCell_(sheet.getRange(t.row, t.col).getValue())) {
-            results[t.i] = {
-              ok: false, num: t.num, id_raboty: t.id_raboty,
-              error: 'Таблица не подтвердила запись — отметка НЕ сохранена, повторите'
-            };
-            verify.failed++;
-            if (verify.failedList.length < 20) verify.failedList.push(t.num);
-          } else {
-            verify.written++;
-          }
-        }
-        for (var c3 = 0; c3 < retryClear.length; c3++) {
-          const t = retryClear[c3];
-          if (isEmptyCell_(sheet.getRange(t.row, t.col).getValue())) {
-            verify.cleared++;
-          } else {
-            results[t.i] = {
-              ok: false, num: t.num, id_raboty: t.id_raboty,
-              error: 'Таблица не подтвердила снятие отметки — повторите'
-            };
-            verify.failed++;
-            if (verify.failedList.length < 20) verify.failedList.push(t.num);
-          }
+      const back2 = fact.getRange(startRow2, 1, again.length, 3).getValues();
+      for (var v2 = 0; v2 < retry.length; v2++) {
+        const t = retry[v2];
+        if (factRowMatches_(back2[v2], t)) {
+          if (t.want) verify.written++; else verify.cleared++;
+        } else {
+          results[t.i] = {
+            ok: false, num: t.num, id_raboty: t.id_raboty,
+            error: 'Журнал не подтвердил запись — отметка НЕ сохранена, повторите'
+          };
+          verify.failed++;
+          if (verify.failedList.length < 20) verify.failedList.push(t.num);
         }
       }
     }
@@ -717,6 +690,61 @@ function setMarks(user, marks) {
 
   logAttempt_('setMarks', user.name, marks.length, results, marks, verify);
   return { ok: true, results: results };
+}
+
+/**
+ * Разрешает подменить лист-журнал ТОЛЬКО на тестовый («Факт_тест...»).
+ * Нужен для нагрузочных проверок, чтобы не мусорить в боевом журнале.
+ * Любое другое имя игнорируется — подменить боевой журнал через параметр
+ * запроса нельзя.
+ */
+function testFactSheet_(name) {
+  const s = String(name || '').trim();
+  return s.indexOf('Факт_тест') === 0 ? s : null;
+}
+
+/** Совпадает ли перечитанная строка журнала с тем, что мы записывали. */
+function factRowMatches_(back, target) {
+  if (!back) return false;
+  return String(back[1] || '').trim() === String(target.num).trim() &&
+         String(back[2] || '').trim() === String(target.work).trim() &&
+         normDate_(back[0]) === target.want;
+}
+
+/**
+ * Лист-журнал отметок; создаётся сам с нужными заголовками.
+ * sheetName задают только тесты, боевой лист — CONFIG.SHEET_FACT.
+ */
+function getOrCreateFactSheet_(ss, sheetName) {
+  const name = sheetName || CONFIG.SHEET_FACT;
+  var sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.appendRow(['Дата записи', 'Помещение', 'Работа', 'Действие', 'Кто', 'Когда записано']);
+  }
+  return sh;
+}
+
+/**
+ * Журнал отметок -> карта 'помещение|работа' -> дата ('yyyy-MM-dd', '' = снято).
+ * Побеждает последняя строка по паре: журнал только дописывается, поэтому
+ * порядок строк = порядок событий. Строки, внесённые в лист вручную, читаются
+ * наравне с записями сайта (колонки «Действие / Кто / Когда» необязательны).
+ */
+function readFactMap_(ss, sheetName) {
+  const map = {};
+  const sh = ss.getSheetByName(sheetName || CONFIG.SHEET_FACT);
+  if (!sh) return map;
+  const last = sh.getLastRow();
+  if (last < 2) return map;
+  const vals = sh.getRange(2, 1, last - 1, 3).getValues();
+  for (var i = 0; i < vals.length; i++) {
+    const num = String(vals[i][1] || '').trim();
+    const work = String(vals[i][2] || '').trim();
+    if (!num || !work) continue;
+    map[num + '|' + work] = normDate_(vals[i][0]);
+  }
+  return map;
 }
 
 /**
@@ -779,6 +807,146 @@ function logAttempt_(action, userName, total, results, marks, verify) {
       v.written, v.cleared, v.retried, v.failed,
       safeLogText_(v.failedList.join(', ')), safeLogText_(samples.join('; '))]);
   } catch (e) { /* журнал не должен ломать запись */ }
+}
+
+/**
+ * Приводит дату к 'yyyy-MM-dd'. Понимает настоящие даты, текст 'дд.мм.гггг'
+ * (~3,5 тыс. ячеек внесены вручную) и уже готовый ISO. Пустое -> ''.
+ */
+function normDate_(v) {
+  if (v === '' || v === null || v === undefined) return '';
+  if (v instanceof Date) return Utilities.formatDate(v, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+  var s = String(v).trim();
+  if (!s) return '';
+  var m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/);
+  if (m) {
+    return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  return s;
+}
+
+/**
+ * Сверка листа «Факт с админки» (журнал отметок: A дата, B помещение,
+ * C работа полным названием) с датами листа «Главный». Только чтение.
+ * Возвращает агрегаты и до 10 примеров на каждый вид расхождения —
+ * данные целиком наружу не отдаются.
+ */
+function factCheck_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const factSheet = ss.getSheetByName(CONFIG.SHEET_FACT);
+  if (!factSheet) return { ok: false, error: 'Лист "' + CONFIG.SHEET_FACT + '" не найден' };
+
+  // Справочник работ
+  const rabotyData = ss.getSheetByName(CONFIG.SHEET_RABOTY).getDataRange().getValues();
+  const workNames = {};
+  for (var w = 1; w < rabotyData.length; w++) {
+    const full = String(rabotyData[w][0] || '').trim();
+    if (full) workNames[full] = true;
+  }
+
+  // Главный: колонки дат по названию работы + даты по помещениям
+  const gl = ss.getSheetByName(CONFIG.SHEET_GLAVNY);
+  const glData = gl.getDataRange().getValues();
+  const headers = glData[0];
+  const colDateByWork = {};
+  for (var j = CONFIG.REGISTRY_LAST_COL; j < headers.length; j++) {
+    const h = String(headers[j] || '').trim();
+    if (workNames[h]) colDateByWork[h] = j + 1;
+  }
+  const glDates = {};   // 'num|work' -> 'yyyy-MM-dd'
+  const knownRooms = {};
+  var glFilled = 0;
+  const glByWork = {};
+  for (var r = 1; r < glData.length; r++) {
+    const num = String(glData[r][CONFIG.COL_NUM - 1] || '').trim();
+    if (!num) continue;
+    knownRooms[num] = true;
+    for (var wn in colDateByWork) {
+      if (!colDateByWork.hasOwnProperty(wn)) continue;
+      const d = normDate_(glData[r][colDateByWork[wn] - 1]);
+      if (d) {
+        glDates[num + '|' + wn] = d;
+        glFilled++;
+        glByWork[wn] = (glByWork[wn] || 0) + 1;
+      }
+    }
+  }
+
+  // Факт с админки: последняя строка по паре побеждает
+  const fLast = ss.getSheetByName(CONFIG.SHEET_FACT).getLastRow();
+  const fData = fLast > 1 ? factSheet.getRange(2, 1, fLast - 1, 3).getValues() : [];
+  const fDates = {};    // 'num|work' -> 'yyyy-MM-dd' ('' = снято)
+  const unknownWorks = {};
+  const unknownRooms = {};
+  var fRows = 0, fEmptyDate = 0;
+  const fByWork = {};
+  for (var i = 0; i < fData.length; i++) {
+    const num = String(fData[i][1] || '').trim();
+    const wn = String(fData[i][2] || '').trim();
+    if (!num && !wn) continue;
+    fRows++;
+    if (!workNames[wn]) unknownWorks[wn] = (unknownWorks[wn] || 0) + 1;
+    if (!knownRooms[num]) unknownRooms[num] = (unknownRooms[num] || 0) + 1;
+    const d = normDate_(fData[i][0]);
+    if (!d) fEmptyDate++;
+    fDates[num + '|' + wn] = d;
+  }
+  for (var k in fDates) {
+    if (!fDates.hasOwnProperty(k) || !fDates[k]) continue;
+    const wn2 = k.split('|')[1];
+    fByWork[wn2] = (fByWork[wn2] || 0) + 1;
+  }
+
+  // Сравнение
+  const missingInFact = [];  // есть в Главном, нет в журнале
+  const extraInFact = [];    // есть в журнале, нет в Главном
+  const mismatch = [];       // дата отличается
+  var okCount = 0, missingCount = 0, extraCount = 0, mismatchCount = 0;
+
+  for (var key in glDates) {
+    if (!glDates.hasOwnProperty(key)) continue;
+    const g = glDates[key];
+    const f = fDates[key];
+    if (!f) {
+      missingCount++;
+      if (missingInFact.length < 10) missingInFact.push(key + ' = ' + g);
+    } else if (f !== g) {
+      mismatchCount++;
+      if (mismatch.length < 10) mismatch.push(key + ': главный ' + g + ' / журнал ' + f);
+    } else {
+      okCount++;
+    }
+  }
+  for (var key2 in fDates) {
+    if (!fDates.hasOwnProperty(key2) || !fDates[key2]) continue;
+    if (!glDates[key2]) {
+      extraCount++;
+      if (extraInFact.length < 10) extraInFact.push(key2 + ' = ' + fDates[key2]);
+    }
+  }
+
+  return {
+    ok: true,
+    fact_sheet: CONFIG.SHEET_FACT,
+    fact_rows: fRows,
+    fact_pairs: Object.keys(fDates).length,
+    fact_empty_date_rows: fEmptyDate,
+    glavny_dates: glFilled,
+    matched: okCount,
+    missing_in_fact: missingCount,
+    extra_in_fact: extraCount,
+    date_mismatch: mismatchCount,
+    unknown_works: unknownWorks,
+    unknown_rooms_count: Object.keys(unknownRooms).length,
+    unknown_rooms_sample: Object.keys(unknownRooms).slice(0, 10),
+    by_work_glavny: glByWork,
+    by_work_fact: fByWork,
+    sample_missing: missingInFact,
+    sample_extra: extraInFact,
+    sample_mismatch: mismatch
+  };
 }
 
 /** Экранирование текста для журнала: защита от formula injection. */
