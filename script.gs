@@ -97,6 +97,13 @@ function doGet(e) {
       return jsonResponse(pingDiagnostic());
     }
 
+    // Свежий пропуск портала на 30 дней (страница на parking.acons.space просит раз в сутки)
+    if (action === 'portalRenew') {
+      const whoR = isPortalPass_(params.token) ? portalWho_(params.token) : null;
+      if (!whoR) return jsonResponse({ ok: false, error: 'bad_pass' });
+      return jsonResponse(portalRenew_(whoR));
+    }
+
     const token = params.token || '';
     const user = authenticate(token);
     if (!user) {
@@ -202,6 +209,22 @@ function doPost(e) {
 
 function authenticate(token) {
   if (!token) return null;
+  // Пропуск портала acons.space (2026-09-21): в поле token вместо 16-символьного токена
+  // подрядчика приходит подписанный пропуск (в нём есть точка) — роль и ФИО из портала.
+  if (isPortalPass_(token)) {
+    const who = portalWho_(token);
+    if (!who) return null;
+    const id = PORTAL_ROLE_IDS[who.role];
+    return {
+      name: who.fio || who.login,
+      id: id,
+      login: who.login,
+      portal: true,
+      isAdmin: id === CONFIG.ADMIN_ID,
+      isViewer: id === CONFIG.VIEWER_ID,
+      isTech: id === CONFIG.TECH_ID
+    };
+  }
   const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.SHEET_PODRYADCHIKI);
   if (!sheet) return null;
   const data = sheet.getDataRange().getValues();
@@ -222,6 +245,117 @@ function authenticate(token) {
   }
   return null;
 }
+
+// ───────────── Вход через портал acons.space (2026-09-21, Портал_acons/TZ.md §9 шаг 6) ─────────────
+// Страница на parking.acons.space получает от портала подписанный пропуск ?p= и шлёт его в бэк
+// тем же полем token, что и токен подрядчика (отличаем по точке: токены — 16 hex без точек).
+// Копия схемы СБ3/Отделки:
+//   1. checkPortalPass_ — подпись HMAC-SHA256 общим секретом PORTAL_SECRET, код 'parking', срок, роль;
+//   2. portalLive_ — живая сверка с сервером портала (роль могли снять), кэш 5 минут;
+//      сервер не ответил → доверяем пропуску (сбой портала не должен выбрасывать людей).
+// Роли портала = роли Паркинга: «Админ», «Наблюдатель», «tech» (Тех помещения) — те же права,
+// что у токенов admin/viewer/tech из «Ведомость_подрядчиков»; автор отметок — ФИО учётки.
+// Токены подрядчиков ?t= не меняются. Роли сравниваются в нижнем регистре.
+// Script Property PORTAL_SECRET (тот же, что у портала) задаёт владелец вручную.
+var PORTAL_APP = 'parking';
+var PORTAL_ROLE_IDS = { 'админ': 'admin', 'наблюдатель': 'viewer', 'tech': 'tech' };
+var PORTAL_ROLES = Object.keys(PORTAL_ROLE_IDS);
+var PORTAL_PASS_TTL_SEC = 30 * 86400;
+var PORTAL_RECHECK_SEC = 300;
+var PORTAL_CHECK_URL = 'https://acons.space/api/portal/check';
+
+function isPortalPass_(t) { return String(t || '').indexOf('.') > 0; }
+
+/** Пропуск подлинный и роль на портале не снята → {login, fio, role}; иначе null. */
+function portalWho_(pp) {
+  var pass = checkPortalPass_(pp, PORTAL_APP, PORTAL_ROLES);
+  if (!pass) return null;
+  var login = String(pass.login || '').trim().toLowerCase();
+  if (!login) return null;
+  var live = portalLive_(login);
+  if (live && !live.role) return null;   // отключён, срок вышел или роль в Паркинге снята
+  var role = String((live && live.role) || pass.role || '').trim().toLowerCase();
+  if (PORTAL_ROLES.indexOf(role) < 0) return null;
+  return { login: login, fio: String((live && live.fio) || pass.fio || '').trim(), role: role };
+}
+
+/**
+ * Текущая роль человека в Паркинге по данным сервера портала acons.space, кэш 5 минут.
+ * {role, fio}: role '' — доступа нет; null — сервер не ответил (пускаем по пропуску).
+ * Запрос подписан PORTAL_SECRET: sig = hex(HMAC-SHA256('логин|parking|ts')), ts — unix-секунды.
+ */
+function portalLive_(login) {
+  login = String(login || '').trim().toLowerCase();
+  var cache = CacheService.getScriptCache();
+  var key = 'plive_' + Utilities.base64EncodeWebSafe(login);
+  var c = cache.get(key);
+  if (c) return c === 'err' ? null : JSON.parse(c);
+  try {
+    var ts = String(Math.floor(Date.now() / 1000));
+    var sig = Utilities.computeHmacSha256Signature(login + '|' + PORTAL_APP + '|' + ts, secret_())
+      .map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+    var url = PORTAL_CHECK_URL + '?login=' + encodeURIComponent(login) + '&app=' + PORTAL_APP +
+              '&ts=' + ts + '&sig=' + sig;
+    var resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    if (resp.getResponseCode() !== 200) throw new Error('сервер портала: HTTP ' + resp.getResponseCode());
+    var j = JSON.parse(resp.getContentText());
+    if (!j.ok) throw new Error('сервер портала: ' + j.error);
+    var role = String(j.role || '').trim().toLowerCase();
+    var res = { role: PORTAL_ROLES.indexOf(role) >= 0 ? role : '', fio: String(j.fio || '') };
+    cache.put(key, JSON.stringify(res), PORTAL_RECHECK_SEC);
+    return res;
+  } catch (e) {
+    cache.put(key, 'err', 60);   // не долбим сервер при сбое, через минуту попробуем снова
+    return null;
+  }
+}
+
+/**
+ * ЗАПУСТИТЬ ОДИН РАЗ В РЕДАКТОРЕ (владелец) после выкладки входа через портал: Google спросит
+ * разрешение «подключаться к внешним сервисам» — нажать «Разрешить». В журнале должен появиться
+ * ответ сервера с "ok": true. До этого вход через портал не работает, токены подрядчиков — работают.
+ */
+function authorizeServer() {
+  var r = UrlFetchApp.fetch('https://acons.space/api/portal?action=ping', { muteHttpExceptions: true });
+  Logger.log('Сервер портала ответил: HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 120));
+  Logger.log('PORTAL_SECRET ' + (PropertiesService.getScriptProperties().getProperty('PORTAL_SECRET') ? 'задан' : 'НЕ ЗАДАН'));
+}
+
+/** Свежий пропуск на 30 дней с текущими ролью и ФИО — страница просит раз в сутки. */
+function portalRenew_(who) {
+  var now = Math.floor(Date.now() / 1000);
+  var payload = JSON.stringify({ l: who.login, n: who.fio, a: PORTAL_APP, r: who.role,
+                                 exp: now + PORTAL_PASS_TTL_SEC, iat: now });
+  var p = b64url_(Utilities.newBlob(payload).getBytes()) + '.' +
+          b64url_(Utilities.computeHmacSha256Signature(payload, secret_()));
+  return { ok: true, p: p, role: who.role, fio: who.fio };
+}
+
+/** Проверка пропуска — копия эталона из Портал_acons/Code.gs. {login, fio, role} или null. */
+function checkPortalPass_(p, myCode, allowedRoles) {
+  try {
+    var parts = String(p || '').split('.');
+    if (parts.length !== 2) return null;
+    var b64 = parts[0];
+    while (b64.length % 4) b64 += '=';
+    var payload = Utilities.newBlob(Utilities.base64DecodeWebSafe(b64)).getDataAsString();
+    // Подпись «как у Google»: computeHmacSha256Signature(строка, строка) — сервер портала считает так же
+    var sig = b64url_(Utilities.computeHmacSha256Signature(payload, secret_()));
+    if (sig !== parts[1]) return null;
+    var d = JSON.parse(payload);
+    if (d.a !== myCode || !d.exp || d.exp < Math.floor(Date.now() / 1000)) return null;
+    if (allowedRoles && allowedRoles.indexOf(String(d.r || '').trim().toLowerCase()) < 0) return null;
+    return { login: d.l, fio: d.n, role: d.r };
+  } catch (e) { return null; }
+}
+
+function secret_() {
+  var s = PropertiesService.getScriptProperties().getProperty('PORTAL_SECRET');
+  if (!s) throw new Error('PORTAL_SECRET не задан в свойствах скрипта');
+  return s;
+}
+
+function b64url_(bytes) { return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, ''); }
 
 // =============================================================================
 // Load snapshot

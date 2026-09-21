@@ -19,6 +19,28 @@
 | GAS аккаунт (clasp) | `kuzkin@acons.group` |
 | GitHub репо | `https://github.com/Nick3000ept/parking-admin` |
 | GitHub Pages URL | `https://nick3000ept.github.io/parking-admin/` |
+| Новый адрес (портал) | `https://parking.acons.space` — папка `/var/www/acons/parking` на сервере acons.space |
+
+## Вход через портал acons.space (2026-09-21, `../Портал_acons/TZ.md` §9 шаг 6)
+
+- Сотрудники входят через портал: плитка «Паркинг СБ3» → `parking.acons.space/?p=<пропуск>`. Роли портала = роли
+  Паркинга: **Админ**, **Наблюдатель**, **tech** (Тех помещения) — те же права, что у токенов admin/viewer/tech из
+  «Ведомость_подрядчиков». «Доступ всем» на портале для Паркинга — Наблюдатель.
+- Страница кладёт пропуск в localStorage `parking_pass` и шлёт его в бэк **тем же полем `token`**; бэк
+  (`authenticate` → `isPortalPass_`) отличает пропуск по точке (токены подрядчиков — 16 hex без точек).
+  Автор в «Факт с админки», журнале монтажа и `Лог_записей` — **ФИО учётки** (раньше «Админ»; другие проекты
+  журнал не читают — проверено 2026-09-21).
+- Бэк: блок «Вход через портал» после `authenticate` — копия СБ3 (`portalWho_`, `portalLive_` — живая сверка роли с
+  сервером портала, кэш 5 мин; `portalRenew_`, `checkPortalPass_`, `secret_`, `b64url_`); действие
+  `portalRenew&token=<пропуск>` — свежий пропуск на 30 дней, страница просит раз в сутки.
+- Страница: на `*.acons.space` без пропуска и без `?t=` — сразу на портал (`goPortal`, не чаще раза в 2 минуты —
+  защита от петли); пропуск не принят → забыть и на портал. Кэш данных и очередь несохранённого у входа через
+  портал хранятся по логину (`storeId()`), чтобы не терялись при продлении пропуска.
+- **Ссылки подрядчиков `?t=` работают без изменений** — и на github.io, и на parking.acons.space. На github.io
+  пропуск не читается вообще.
+- Script Properties бэка: `PORTAL_SECRET` (тот же, что у портала) — вводит владелец. Разовое разрешение на внешние
+  запросы — функция `authorizeServer()` в редакторе (пишет в журнал ответ портала и «PORTAL_SECRET задан»).
+- Деплой страницы на новый адрес: `scp index.html acons:/var/www/acons/parking/index.html` (вместе с `git push`).
 
 ## Листы в Google Sheets
 
@@ -43,8 +65,9 @@ cd "c:/Users/User/YandexDisk/VS_hub/СБ3_Паркинг_Админ"
 git add index.html
 git commit -m "..."
 git push
+scp index.html acons:/var/www/acons/parking/index.html
 ```
-GitHub Pages подхватит через ~1 минуту.
+GitHub Pages подхватит через ~1 минуту; parking.acons.space — сразу.
 
 ### Бэк (script.gs)
 ```

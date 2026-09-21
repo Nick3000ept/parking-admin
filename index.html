@@ -674,6 +674,7 @@ body.has-selection { padding-bottom: 100px; }
   <div class="panel">
     <h2>Доступ закрыт</h2>
     <p id="stateDeniedMsg">Откройте ссылку, выданную администратором.</p>
+    <p id="stateDeniedPortal" style="display:none"><a href="https://acons.space/?next=parking">Войти через портал acons.space</a></p>
   </div>
 </div>
 
@@ -725,6 +726,66 @@ const STORAGE_DATA_PREFIX = 'parking_data_';
 const STORAGE_CHANGELOG_SEEN = 'parking_changelog_seen';
 const CHANGELOG_VERSION = '2026-09-03';
 
+// ─── Вход через портал acons.space (2026-09-21, Портал_acons/TZ.md §9 шаг 6) ───
+// Только на *.acons.space (PORTAL_MODE). Портал открывает Паркинг ссылкой ?p=<пропуск>:
+// пропуск кладём в localStorage и дальше шлём в бэк тем же полем token, что и токен подрядчика
+// (бэк отличает пропуск по точке). Без пропуска и без ?t= — сразу на портал (goPortal, не чаще
+// раза в 2 минуты — защита от петли). На github.io всё как раньше, пропуск не читается.
+// Ссылки подрядчиков ?t= работают и на новом адресе.
+const PORTAL_MODE = /(^|\.)acons\.space$/i.test(location.hostname);
+const PORTAL_LOGIN_URL = 'https://acons.space/?next=parking';
+const STORAGE_PASS = 'parking_pass';
+
+// Содержимое пропуска {l: логин, n: ФИО, a: админка, r: роль, exp, iat} — только для страницы;
+// подпись и актуальную роль проверяет бэк.
+function passInfo(p) {
+  try {
+    let s = String(p || '').split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0))));
+  } catch (e) { return null; }
+}
+function passUsable(p) {
+  const i = passInfo(p);
+  return !!(i && i.l && i.a === 'parking' && i.exp && i.exp > Date.now() / 1000);
+}
+function forgetPass() {
+  state.pass = null;
+  try { localStorage.removeItem(STORAGE_PASS); } catch (e) {}
+}
+function goPortal() {
+  try {
+    const last = Number(sessionStorage.getItem('parking_portal_jump') || 0);
+    if (Date.now() - last < 120000) return false;
+    sessionStorage.setItem('parking_portal_jump', String(Date.now()));
+  } catch (e) { return false; }
+  location.href = PORTAL_LOGIN_URL;
+  return true;
+}
+// Пропуск живёт 30 дней; раз в сутки при открытии меняется на свежий. Не вышло — не страшно.
+async function renewPass() {
+  if (!state.pass) return;
+  const info = passInfo(state.pass);
+  if (info && info.iat && Date.now() / 1000 - info.iat < 86400) return;
+  try {
+    const resp = await fetch(GAS_URL + '?action=portalRenew&token=' + encodeURIComponent(state.pass));
+    const j = JSON.parse(await resp.text());
+    const ni = (j && j.ok && j.p) ? passInfo(j.p) : null;
+    if (!ni || String(ni.l || '').toLowerCase() !== String((info && info.l) || '').toLowerCase()) return;
+    state.pass = state.token = j.p;
+    try { localStorage.setItem(STORAGE_PASS, j.p); } catch (e) {}
+  } catch (e) { /* следующая попытка при следующем открытии */ }
+}
+// Ключ кэша данных и очереди несохранённого: у входа через портал — по логину (пропуск
+// меняется при продлении, очередь при этом не должна теряться), у подрядчика — токен.
+function storeId() {
+  if (state.pass) {
+    const i = passInfo(state.pass);
+    return 'p_' + String((i && i.l) || '').toLowerCase();
+  }
+  return state.token;
+}
+
 // Работы, для которых релевантна площадь стен (а не пола)
 const WALL_WORK_IDS = new Set(['wall_stukat', 'wall_paint']);
 const DOOR_WORK_IDS = new Set(['doors']);
@@ -740,6 +801,7 @@ const roomAreaDisplayFor = (room, workId) => isWallWork(workId) ? (room.walls ||
 // ============================================================================
 const state = {
   token: null,
+  pass: null, // пропуск портала (только *.acons.space); если есть — он же лежит в token
   data: null,
   selected: new Set(), // num помещений выбранных через Ctrl+Click
   markMode: false, // режим отметки: клик по карточке ставит/снимает
@@ -766,7 +828,10 @@ window.addEventListener('DOMContentLoaded', boot);
 async function boot() {
   state.token = extractToken();
   if (!state.token) {
-    showDenied('Токен не предоставлен. Откройте ссылку, выданную администратором.');
+    if (PORTAL_MODE && goPortal()) return;
+    showDenied(PORTAL_MODE
+      ? 'Войдите через портал acons.space. Подрядчику — откройте ссылку, выданную администратором.'
+      : 'Токен не предоставлен. Откройте ссылку, выданную администратором.');
     return;
   }
   bindUI();
@@ -775,6 +840,25 @@ async function boot() {
 
 function extractToken() {
   const url = new URL(window.location.href);
+  // *.acons.space: пропуск портала ?p= (приоритетнее всего), затем ссылка подрядчика ?t=,
+  // затем сохранённый пропуск, затем сохранённый токен
+  if (PORTAL_MODE) {
+    const p = url.searchParams.get('p');
+    if (p) {
+      try { localStorage.setItem(STORAGE_PASS, p); } catch (e) {}
+      window.history.replaceState({}, '', url.origin + url.pathname);
+      state.pass = p;
+      return p;
+    }
+    if (url.searchParams.get('t')) {
+      forgetPass(); // открыта ссылка подрядчика — работаем по ней
+    } else {
+      let saved = null;
+      try { saved = localStorage.getItem(STORAGE_PASS); } catch (e) {}
+      if (saved && passUsable(saved)) { state.pass = saved; return saved; }
+      if (saved) forgetPass();
+    }
+  }
   let fromUrl = url.searchParams.get('t');
   // Fallback: если в URL не t=<token>, а опечатка ?=token или другой ключ —
   // ищем в query string любую последовательность из 16 hex (формат наших токенов).
@@ -796,7 +880,7 @@ function extractToken() {
 // ============================================================================
 async function loadData(forceFresh) {
   // Render from cache if available and !forceFresh
-  const cacheKey = STORAGE_DATA_PREFIX + state.token;
+  const cacheKey = STORAGE_DATA_PREFIX + storeId();
   const cached = localStorage.getItem(cacheKey);
   if (cached && !forceFresh) {
     try {
@@ -828,6 +912,13 @@ async function loadData(forceFresh) {
     if (!data.ok) {
       if (data.error === 'Доступ закрыт' || /Доступ/i.test(data.error || '')) {
         localStorage.removeItem(cacheKey);
+        // Пропуск портала не принят (срок, роль в Паркинге снята) — за новым на портал
+        if (state.pass) {
+          forgetPass();
+          if (goPortal()) return;
+          showDenied('Вход через портал не принят: у вашей учётной записи нет роли в Паркинге.');
+          return;
+        }
         showDenied(data.error || 'Доступ закрыт');
         return;
       }
@@ -839,6 +930,7 @@ async function loadData(forceFresh) {
     try { localStorage.setItem(cacheKey, JSON.stringify(state.data)); } catch (e) { /* квота */ }
     renderApp();
     restoreQueue();
+    renewPass();
   } catch (err) {
     if (!state.data) {
       showError('Не удалось загрузить данные: ' + err.message);
@@ -1642,7 +1734,7 @@ const STORAGE_QUEUE_PREFIX = 'parking_queue_';
 function persistQueue() {
   if (!state.token) return;
   try {
-    const key = STORAGE_QUEUE_PREFIX + state.token;
+    const key = STORAGE_QUEUE_PREFIX + storeId();
     if (markQueue.length === 0 && equipQueue.length === 0) {
       localStorage.removeItem(key);
       return;
@@ -1659,7 +1751,7 @@ function restoreQueue() {
   if (queueRestored || !state.data) return;
   queueRestored = true;
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(STORAGE_QUEUE_PREFIX + state.token) || 'null'); } catch (e) {}
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_QUEUE_PREFIX + storeId()) || 'null'); } catch (e) {}
   if (!saved) return;
   let n = 0;
   for (const x of (saved.m || [])) {
@@ -1995,7 +2087,7 @@ function saveCache() {
   if (saveCacheTimer) clearTimeout(saveCacheTimer);
   saveCacheTimer = setTimeout(() => {
     try {
-      localStorage.setItem(STORAGE_DATA_PREFIX + state.token, JSON.stringify(state.data));
+      localStorage.setItem(STORAGE_DATA_PREFIX + storeId(), JSON.stringify(state.data));
     } catch (e) { /* quota / serialize fail — игнор */ }
     saveCacheTimer = null;
   }, 300);
@@ -2485,6 +2577,7 @@ function showDenied(msg) {
   document.getElementById('filtersEl').style.display = 'none';
   document.getElementById('matrixWrap').style.display = 'none';
   if (msg) document.getElementById('stateDeniedMsg').textContent = msg;
+  if (PORTAL_MODE) document.getElementById('stateDeniedPortal').style.display = '';
   document.getElementById('stateDenied').classList.add('show');
 }
 function showError(msg) {
