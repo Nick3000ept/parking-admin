@@ -1035,9 +1035,9 @@ function renderHeader() {
   badge.textContent = u.name + suffix;
   badge.classList.toggle('admin', u.isAdmin);
   badge.classList.toggle('viewer', u.isViewer);
-  // Режим «Тех помещения» доступен роли tech и Админу (решение пользователя 2026-08-26);
-  // у подрядчиков и Наблюдателя кнопки нет
-  document.getElementById('techModeBtn').style.display = (u.isTech || u.isAdmin) ? '' : 'none';
+  // Режим «Тех помещения» открыт всем ролям для просмотра (решение пользователя 2026-10-08;
+  // до того — только tech и Админ). Править проценты на карточках могут только tech и Админ.
+  document.getElementById('techModeBtn').style.display = '';
   // «← Портал» — только у вошедших по пропуску портала; подрядчикам по ссылке ?t= портал не нужен
   document.getElementById('portalBackBtn').hidden = !state.pass;
 }
@@ -1419,7 +1419,9 @@ function buildCard(room) {
         input.max = '100';
         input.step = '5';
         input.value = w.pct;
-        const canEdit = !isViewer && (isAdmin || isTech || w.sp === userName);
+        // На карточках тех-режима правят только роль «Тех помещения» и Админ (решение
+        // пользователя 2026-10-08); подрядчик свои строки правит в попапе, остальные — просмотр
+        const canEdit = isTech || isAdmin;
         if (!canEdit) input.disabled = true;
         input.addEventListener('click', e => e.stopPropagation());
         input.addEventListener('change', () => {
@@ -2651,10 +2653,8 @@ function bindUI() {
   });
 
   document.getElementById('techModeBtn').addEventListener('click', () => {
-    // Режим тех-помещений — для роли tech и Админа (кнопка у остальных скрыта,
-    // но подстрахуемся и в обработчике)
-    if (!state.data || !state.data.user ||
-        !(state.data.user.isTech || state.data.user.isAdmin)) return;
+    // Режим тех-помещений открыт всем (2026-10-08); права на правку решаются на карточках
+    if (!state.data || !state.data.user) return;
     state.filters.techOnly = !state.filters.techOnly;
     document.getElementById('techModeBtn').classList.toggle('active', state.filters.techOnly);
     // В режиме тех-помещений чипсы работ заменяются категориями тех-помещений:
